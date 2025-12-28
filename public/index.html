@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔒 P2P File Transfer - Transfert Sécurisé</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔒 P2P File Transfer</h1>
+            <p class="subtitle">Transfert de fichiers chiffré de bout en bout, sans serveur intermédiaire</p>
+        </header>
+
+        <!-- MODE EXPÉDITEUR (par défaut) -->
+        <section id="sender-section" class="section">
+            <div id="drop-zone" class="drop-zone">
+                <div class="drop-zone-content">
+                    <span class="drop-icon">📁</span>
+                    <p>Glissez-déposez un fichier ici</p>
+                    <p class="or">ou</p>
+                    <label class="file-input-label">
+                        <input type="file" id="file-input" hidden>
+                        <span class="btn btn-primary">Choisir un fichier</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Infos fichier sélectionné -->
+            <div id="file-info" class="file-info hidden">
+                <div class="file-icon">📄</div>
+                <div class="file-details">
+                    <span id="file-name" class="file-name"></span>
+                    <span id="file-size" class="file-size"></span>
+                </div>
+                <button id="clear-file" class="btn btn-small">✕</button>
+            </div>
+
+            <!-- Mot de passe (optionnel) -->
+            <div class="password-block hidden" id="password-block">
+                <label for="password-input">Mot de passe (optionnel)</label>
+                <input type="password" id="password-input" placeholder="Choisissez un mot de passe">
+                <button id="send-file-btn" class="btn btn-primary">📤 Envoyer le fichier</button>
+                <p class="hint">Le mot de passe n'est jamais envoyé au serveur. Partagez-le séparément.</p>
+            </div>
+
+            <!-- Zone de lien à partager -->
+            <div id="link-section" class="link-section hidden">
+                <h3>🔗 Partagez ce lien avec le destinataire</h3>
+                <div class="link-container">
+                    <input type="text" id="share-link" readonly>
+                    <button id="copy-link" class="btn btn-primary">📋 Copier</button>
+                </div>
+                <p id="link-status" class="status status-waiting">
+                    <span class="pulse"></span>
+                    En attente du destinataire...
+                </p>
+            </div>
+        </section>
+
+        <!-- MODE DESTINATAIRE -->
+        <section id="receiver-section" class="section hidden">
+            <div class="receiver-info">
+                <h2>📥 Réception de fichier</h2>
+
+                <div id="receiver-password-block" class="password-block hidden">
+                    <label for="receiver-password">Mot de passe requis</label>
+                    <input type="password" id="receiver-password" placeholder="Entrez le mot de passe partagé">
+                    <button id="receiver-password-apply" class="btn btn-primary">Déverrouiller</button>
+                    <p class="hint">Le mot de passe reste sur cet appareil et dérive la clé de chiffrement.</p>
+                </div>
+
+                <div id="incoming-file-info" class="incoming-file-info">
+                    <div class="file-icon large">📄</div>
+                    <p id="incoming-file-name" class="file-name"></p>
+                    <p id="incoming-file-size" class="file-size"></p>
+                </div>
+                <button id="receive-file-btn" class="btn btn-primary hidden">📥 Recevoir le fichier</button>
+                <p id="receiver-status" class="status">Connexion en cours...</p>
+            </div>
+        </section>
+
+        <!-- BARRE DE PROGRESSION (commune) -->
+        <section id="progress-section" class="section hidden">
+            <h3 id="progress-title">Transfert en cours...</h3>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div id="progress-fill" class="progress-fill"></div>
+                </div>
+                <div class="progress-stats">
+                    <span id="progress-percent">0%</span>
+                    <span id="progress-speed"></span>
+                    <span id="progress-transferred"></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION TERMINÉE -->
+        <section id="complete-section" class="section hidden">
+            <div class="complete-content">
+                <div class="complete-icon">✅</div>
+                <h2>Transfert terminé !</h2>
+                <p id="complete-message"></p>
+                <div id="integrity-check" class="integrity-check">
+                    <span class="integrity-icon">🔐</span>
+                    <span>Intégrité vérifiée (SHA-256)</span>
+                </div>
+                <button id="new-transfer" class="btn btn-primary">Nouveau transfert</button>
+            </div>
+        </section>
+
+        <!-- SECTION ERREUR -->
+        <section id="error-section" class="section hidden">
+            <div class="error-content">
+                <div class="error-icon">❌</div>
+                <h2>Erreur</h2>
+                <p id="error-message"></p>
+                <button id="retry-transfer" class="btn btn-primary">Réessayer</button>
+            </div>
+        </section>
+
+        <footer>
+            <p>🔐 Chiffrement AES-256-GCM | 🌐 WebRTC P2P | 🚫 Aucune donnée stockée sur le serveur</p>
+        </footer>
+    </div>
+
+    <!-- Simple-peer via CDN -->
+    <script src="https://unpkg.com/simple-peer@9.11.1/simplepeer.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
