@@ -3,26 +3,85 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔒 P2P File Transfer - Transfert Sécurisé</title>
+    <title>🔒 SecurePeer - Transfert Sécurisé</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <header class="top-header">
+        <div class="header-content">
+            <div class="header-logo">
+                <span class="logo-icon">🔒</span>
+                <span class="logo-text">SecurePeer</span>
+            </div>
+            <div class="header-actions">
+                <button id="theme-toggle" class="theme-toggle" title="Changer de thème">🌓</button>
+                <div class="language-selector">
+                    <button id="language-toggle" class="language-toggle" title="Select language">🌐 FR</button>
+                    <div id="language-menu" class="language-menu hidden">
+                        <button data-lang="fr" class="lang-option">🇫🇷 Français</button>
+                        <button data-lang="en" class="lang-option">🇬🇧 English</button>
+                        <button data-lang="es" class="lang-option">🇪🇸 Español</button>
+                        <button data-lang="it" class="lang-option">🇮🇹 Italiano</button>
+                        <button data-lang="ru" class="lang-option">🇷🇺 Русский</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+    
     <div class="container">
-        <header>
-            <h1>🔒 P2P File Transfer</h1>
-            <p class="subtitle">Transfert de fichiers chiffré de bout en bout, sans serveur intermédiaire</p>
-        </header>
+        <section class="hero">
+            <div class="hero-content">
+                <h1>🔒 SecurePeer</h1>
+                <p class="subtitle">Transfert de fichiers chiffré de bout en bout, sans serveur intermédiaire</p>
+                <div class="hero-badges">
+                    <span>🔐 AES-256-GCM</span>
+                    <span>🌐 WebRTC P2P</span>
+                    <span>🚫 Pas de stockage</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- SÉLECTION DU MODE -->
+        <section id="mode-selection" class="section mode-selection">
+            <div class="mode-header">
+                <h2>🚀 Créer une session</h2>
+                <p class="section-desc">Choisissez le type de session que vous souhaitez démarrer</p>
+            </div>
+            <div class="mode-cards">
+                <button class="mode-card" data-mode="file">
+                    <div class="mode-icon">📁</div>
+                    <h3>Transfert de fichiers</h3>
+                    <p>Envoyez des fichiers de manière sécurisée</p>
+                </button>
+                <button class="mode-card" data-mode="chat">
+                    <div class="mode-icon">💬</div>
+                    <h3>Chat sécurisé</h3>
+                    <p>Discutez en temps réel, chiffré E2E</p>
+                </button>
+                <button class="mode-card" data-mode="both">
+                    <div class="mode-icon">📁💬</div>
+                    <h3>Fichiers + Chat</h3>
+                    <p>Transférez et discutez simultanément</p>
+                </button>
+            </div>
+        </section>
 
         <!-- MODE EXPÉDITEUR (par défaut) -->
-        <section id="sender-section" class="section">
+        <section id="sender-section" class="section sender-section hidden">
+            <div class="sender-header">
+                <h2>📤 Envoyer un fichier</h2>
+                <p class="section-desc">Choisissez un fichier et partagez le lien sécurisé</p>
+            </div>
+
             <div id="drop-zone" class="drop-zone">
                 <div class="drop-zone-content">
                     <span class="drop-icon">📁</span>
-                    <p>Glissez-déposez un fichier ici</p>
-                    <p class="or">ou</p>
+                    <p><strong>Glissez-déposez un fichier ici</strong></p>
+                    <p class="or">ou cliquez pour sélectionner</p>
                     <label class="file-input-label">
-                        <input type="file" id="file-input" hidden>
-                        <span class="btn btn-primary">Choisir un fichier</span>
+                        <input type="file" id="file-input" hidden multiple>
+                        <span class="btn btn-primary btn-large">Choisir un fichier</span>
                     </label>
                 </div>
             </div>
@@ -34,35 +93,74 @@
                     <span id="file-name" class="file-name"></span>
                     <span id="file-size" class="file-size"></span>
                 </div>
-                <button id="clear-file" class="btn btn-small">✕</button>
+                <button id="clear-file" class="btn btn-small">✕ Supprimer</button>
             </div>
 
             <!-- Mot de passe (optionnel) -->
             <div class="password-block hidden" id="password-block">
-                <label for="password-input">Mot de passe (optionnel)</label>
-                <input type="password" id="password-input" placeholder="Choisissez un mot de passe">
-                <button id="send-file-btn" class="btn btn-primary">📤 Envoyer le fichier</button>
-                <p class="hint">Le mot de passe n'est jamais envoyé au serveur. Partagez-le séparément.</p>
+                <label for="password-input">🔐 Protection par mot de passe (optionnel)</label>
+                <input type="password" id="password-input" placeholder="Entrez un mot de passe pour plus de sécurité">
+                <p class="hint">Le mot de passe ne quitte jamais votre appareil</p>
+                <button id="send-file-btn" class="btn btn-primary btn-large">📤 Envoyer le fichier</button>
             </div>
 
             <!-- Zone de lien à partager -->
             <div id="link-section" class="link-section hidden">
-                <h3>🔗 Partagez ce lien avec le destinataire</h3>
+                <div class="link-header">
+                    <h3>🔗 Lien de partage généré</h3>
+                    <p class="link-info">Partagez ce lien avec le destinataire</p>
+                </div>
                 <div class="link-container">
-                    <input type="text" id="share-link" readonly>
+                    <input type="text" id="share-link" readonly class="share-link-input">
                     <button id="copy-link" class="btn btn-primary">📋 Copier</button>
+                </div>
+                <div id="qrcode-container" class="qrcode-container hidden">
+                    <div id="qrcode"></div>
+                    <p class="qrcode-hint">Scannez pour recevoir sur mobile</p>
                 </div>
                 <p id="link-status" class="status status-waiting">
                     <span class="pulse"></span>
                     En attente du destinataire...
                 </p>
             </div>
+
+            <!-- Zone de Chat (visible si mode chat ou both) -->
+            <div id="chat-section" class="chat-section hidden">
+                <div class="chat-header">
+                    <h3>💬 Chat sécurisé</h3>
+                    <span class="chat-status" id="chat-status">En attente...</span>
+                </div>
+                <div class="chat-messages" id="chat-messages">
+                    <!-- Messages dynamiques -->
+                </div>
+                <div class="chat-input-container">
+                    <input type="text" id="chat-input" placeholder="Tapez votre message..." autocomplete="off">
+                    <button id="chat-send" class="btn btn-primary">Envoyer</button>
+                </div>
+            </div>
+            
+            <!-- Zone de fichiers pour mode both (côté expéditeur) -->
+            <div id="both-file-section" class="both-file-section hidden">
+                <div class="both-file-header">
+                    <h4>📁 Fichiers</h4>
+                </div>
+                <div id="both-file-list" class="both-file-list">
+                    <!-- Liste des fichiers reçus/envoyés -->
+                </div>
+                <div class="both-file-input">
+                    <label class="btn btn-small btn-file-select">
+                        <input type="file" id="both-file-input" hidden multiple>
+                        📎 Ajouter
+                    </label>
+                    <button id="both-file-send" class="btn btn-primary btn-small" disabled>📤 Envoyer</button>
+                </div>
+            </div>
         </section>
 
         <!-- MODE DESTINATAIRE -->
         <section id="receiver-section" class="section hidden">
             <div class="receiver-info">
-                <h2>📥 Réception de fichier</h2>
+                <h2 id="receiver-title">📥 Réception de fichier</h2>
 
                 <div id="receiver-password-block" class="password-block hidden">
                     <label for="receiver-password">Mot de passe requis</label>
@@ -78,6 +176,38 @@
                 </div>
                 <button id="receive-file-btn" class="btn btn-primary hidden">📥 Recevoir le fichier</button>
                 <p id="receiver-status" class="status">Connexion en cours...</p>
+            </div>
+
+            <!-- Zone de Chat côté destinataire -->
+            <div id="receiver-chat-section" class="chat-section hidden">
+                <div class="chat-header">
+                    <h3>💬 Chat sécurisé</h3>
+                    <span class="chat-status" id="receiver-chat-status">Connecté</span>
+                </div>
+                <div class="chat-messages" id="receiver-chat-messages">
+                    <!-- Messages dynamiques -->
+                </div>
+                <div class="chat-input-container">
+                    <input type="text" id="receiver-chat-input" placeholder="Tapez votre message..." autocomplete="off">
+                    <button id="receiver-chat-send" class="btn btn-primary">Envoyer</button>
+                </div>
+            </div>
+            
+            <!-- Zone de fichiers pour mode both (côté destinataire) -->
+            <div id="receiver-both-file-section" class="both-file-section hidden">
+                <div class="both-file-header">
+                    <h4>📁 Fichiers</h4>
+                </div>
+                <div id="receiver-both-file-list" class="both-file-list">
+                    <!-- Liste des fichiers reçus/envoyés -->
+                </div>
+                <div class="both-file-input">
+                    <label class="btn btn-small btn-file-select">
+                        <input type="file" id="receiver-both-file-input" hidden multiple>
+                        📎 Ajouter
+                    </label>
+                    <button id="receiver-both-file-send" class="btn btn-primary btn-small" disabled>📤 Envoyer</button>
+                </div>
             </div>
         </section>
 
@@ -121,12 +251,16 @@
         </section>
 
         <footer>
-            <p>🔐 Chiffrement AES-256-GCM | 🌐 WebRTC P2P | 🚫 Aucune donnée stockée sur le serveur</p>
+            <p>🔐 Chiffrement AES-256-GCM | 🌐 WebRTC P2P | 🚫 Aucune donnée stockée sur le serveur | SecurePeer</p>
         </footer>
     </div>
 
     <!-- Simple-peer via CDN -->
     <script src="https://unpkg.com/simple-peer@9.11.1/simplepeer.min.js"></script>
+    <!-- JSZip for multi-file automatic zipping -->
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <!-- QRCode.js for link sharing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
