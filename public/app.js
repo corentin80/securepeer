@@ -582,13 +582,19 @@ function handleWebSocketMessage(data) {
 
 // Initialiser les connexions P2P avec tous les participants existants (quand on rejoint une room)
 function initPeersWithExistingParticipants() {
+    console.log('🔗 initPeersWithExistingParticipants: participants.size =', participants.size);
+    
+    // Toujours envoyer receiver-ready pour signaler qu'on est prêt
+    // Le créateur recevra ce signal et initiera la connexion P2P
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        console.log('📤 Envoi de receiver-ready');
+        ws.send(JSON.stringify({ type: 'receiver-ready' }));
+    }
+    
+    // Si on a déjà des participants, créer les connexions P2P avec eux
     participants.forEach((info, odId) => {
         if (!peers.has(odId)) {
             console.log(`🚀 Connexion P2P avec ${info.pseudo} (${odId})`);
-            // Notifier que je suis prêt
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'receiver-ready' }));
-            }
         }
     });
 }

@@ -115,6 +115,7 @@ wss.on('connection', (ws) => {
                         return;
                     }
                     console.log('✅ [JOIN] Room trouvée, participants actuels:', room.participants.size);
+                    console.log('   📋 Participants existants:', Array.from(room.participants.keys()));
                     // Annuler le timer de suppression si quelqu'un rejoint
                     if (room.deleteTimer) {
                         clearTimeout(room.deleteTimer);
@@ -141,6 +142,8 @@ wss.on('connection', (ws) => {
                             existingParticipants.push({ odId: odid, pseudo: p.pseudo, isCreator: p.isCreator });
                         }
                     });
+                    console.log('📤 [JOIN] Envoi room-joined avec participants:', existingParticipants.length);
+                    console.log('   📋 Liste envoyée:', existingParticipants.map(p => p.pseudo));
                     ws.send(JSON.stringify({
                         type: 'room-joined',
                         roomId: data.roomId,
@@ -151,6 +154,7 @@ wss.on('connection', (ws) => {
                     // Notifier tous les autres participants
                     room.participants.forEach((p, odid) => {
                         if (odid !== effectiveOdId && p.ws.readyState === WebSocket.OPEN) {
+                            console.log('📤 [JOIN] Notification peer-joined envoyée à:', p.pseudo);
                             p.ws.send(JSON.stringify({
                                 type: 'peer-joined',
                                 odId: effectiveOdId,
