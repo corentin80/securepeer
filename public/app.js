@@ -5,6 +5,8 @@
 
 // ===== CONFIGURATION =====
 const CHUNK_SIZE = 64 * 1024; // 64 Ko par morceau
+
+
 const STUN_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
@@ -308,14 +310,16 @@ function connectWebSocket() {
         // Vérifier si on a une session sauvegardée (reconnexion)
         const savedSession = localStorage.getItem('securepeer_session');
         const isReconnection = savedSession !== null;
-        
+        const savedOdId = localStorage.getItem('securepeer_odid');
+
         if (isReceiver && !isReconnection) {
             // Mode destinataire pour la première fois : rejoindre la room
             console.log('📥 Première connexion destinataire');
             ws.send(JSON.stringify({
                 type: 'join-room',
                 roomId: roomId,
-                pseudo: userPseudo
+                pseudo: userPseudo,
+                odId: savedOdId || undefined
             }));
         } else if (isReceiver && isReconnection) {
             // Destinataire qui se reconnecte
@@ -323,17 +327,24 @@ function connectWebSocket() {
             ws.send(JSON.stringify({
                 type: 'join-room',
                 roomId: roomId,
-                pseudo: userPseudo
+                pseudo: userPseudo,
+                odId: savedOdId || undefined
             }));
         } else if (roomId && isReconnection) {
             // Mode expéditeur qui se reconnecte
-            console.log('🔄 Reconnexion expéditeur');
-            ws.send(JSON.stringify({
+            console.log('🔄 [WS] Reconnexion expéditeur détectée');
+            console.log('   📦 roomId:', roomId);
+            console.log('   👤 pseudo:', userPseudo);
+            console.log('   🔑 odId:', savedOdId);
+            const rejoinMsg = {
                 type: 'rejoin-room',
                 roomId: roomId,
                 pseudo: userPseudo,
-                role: 'sender'
-            }));
+                role: 'sender',
+                odId: savedOdId || undefined
+            };
+            console.log('📤 [WS] Envoi rejoin-room:', rejoinMsg);
+            ws.send(JSON.stringify(rejoinMsg));
         } else {
             // Mode expéditeur : créer une nouvelle room
             console.log('📤 Création nouvelle room');
@@ -365,18 +376,41 @@ function handleWebSocketMessage(data) {
         case 'room-created':
             roomId = data.roomId;
             myOdId = data.odId;
+            // Sauvegarder l'odId pour reconnexion future
+            localStorage.setItem('securepeer_odid', myOdId);
             isCreator = true;
             saveSessionToStorage();
             generateShareLink();
             break;
             
         case 'room-rejoined':
-            console.log('🔄 Reconnecté à la room en tant qu\'expéditeur');
+            console.log('✅ [WS] room-rejoined reçu !');
+            console.log('   📦 roomId:', data.roomId);
+            console.log('   🔑 odId:', data.odId);
+            console.log('   👥 participants:', data.participants);
+            console.log('   📄 fileInfo:', data.fileInfo);
+            console.log('   🔗 hasReceiver:', data.hasReceiver);
             roomId = data.roomId;
+            myOdId = data.odId;
+            isCreator = true;
+            // Sauvegarder l'odId pour reconnexion future
+            localStorage.setItem('securepeer_odid', myOdId);
+            // Restaurer les participants existants
+            participants.clear();
+            if (data.participants && Array.isArray(data.participants)) {
+                data.participants.forEach(p => {
+                    if (p.odId !== myOdId) {
+                        participants.set(p.odId, { pseudo: p.pseudo, isCreator: p.isCreator || false });
+                    }
+                });
+                connectedCount = participants.size;
+                console.log(`👥 ${connectedCount} participant(s) déjà dans la room`);
+            }
+            updateConnectedUsersDropdown();
             generateShareLink();
-            // Si un receiver est déjà là, le notifier
-            if (data.hasReceiver) {
-                connectedCount = 1;
+            saveSessionToStorage();
+            // Si un receiver est déjà là, mettre à jour le statut
+            if (data.hasReceiver || connectedCount > 0) {
                 elements.linkStatus.innerHTML = `<span class="pulse"></span> 👥 ${connectedCount} utilisateur(s) connecté(s)`;
                 elements.linkStatus.className = 'status status-connected';
             }
@@ -386,6 +420,8 @@ function handleWebSocketMessage(data) {
             console.log('✅ Room rejointe');
             console.log('📦 FileInfo reçue:', data.fileInfo);
             myOdId = data.odId;
+            // Sauvegarder l'odId pour reconnexion future
+            localStorage.setItem('securepeer_odid', myOdId);
             fileInfo = data.fileInfo;
             if (fileInfo) {
                 elements.incomingFileName.textContent = fileInfo.name;
@@ -427,15 +463,21 @@ function handleWebSocketMessage(data) {
             break;
             
         case 'peer-joined':
+            console.log('👋 [PEER] Nouveau participant détecté !');
+            console.log('   👤 pseudo:', data.pseudo);
+            console.log('   🔑 odId:', data.odId);
+            console.log('   👑 isCreator:', data.isCreator);
+            
             // Éviter les doublons (même odId déjà connu)
             if (participants.has(data.odId)) {
-                console.log(`⚠️ Participant déjà connu, ignoré: ${data.pseudo}`);
+                console.log(`⚠️ [PEER] Participant déjà connu, ignoré: ${data.pseudo}`);
                 break;
             }
             
-            console.log(`👥 Nouveau participant: ${data.pseudo} (${data.odId})`);
+            console.log(`✅ [PEER] Ajout du participant: ${data.pseudo}`);
             participants.set(data.odId, { pseudo: data.pseudo, isCreator: data.isCreator || false });
             connectedCount = participants.size;
+            console.log('   👥 Total participants maintenant:', connectedCount);
             
             // Mettre à jour le statut (selon si on est creator ou receiver)
             if (!isReceiver && elements.linkStatus) {
@@ -1371,6 +1413,12 @@ function saveSessionToStorage() {
             passwordSaltB64: passwordSaltB64,
             passwordIterations: passwordIterations,
             hash: window.location.hash.substring(1),
+            // Persist pseudo and odId so creator can be restored exactly
+            pseudo: userPseudo || localStorage.getItem('securepeer_pseudo') || null,
+            odId: myOdId || localStorage.getItem('securepeer_odid') || null,
+            isCreator: isCreator || false,
+            // include minimal fileInfo to restore UI/state if available
+            fileInfo: fileInfo || null,
             timestamp: Date.now()
         };
         localStorage.setItem('securepeer_session', JSON.stringify(session));
@@ -1517,11 +1565,11 @@ function setupLandingPage() {
     console.log('🚀 setupLandingPage called, startSessionBtn:', elements.startSessionBtn);
     if (elements.startSessionBtn) {
         elements.startSessionBtn.addEventListener('click', () => {
+            elements.startSessionBtn.disabled = true; // Empêche le double clic
             console.log('✅ Bouton Commencer cliqué!');
             // Cacher la landing, montrer la sélection de mode directement
             elements.landingPage.classList.add('hidden');
             elements.modeSelection.classList.remove('hidden');
-            
             // Setup des cartes de sélection de mode
             setupModeSelection();
         });
@@ -1558,78 +1606,35 @@ function showPseudoThenConnect(hash) {
     };
 }
 
-// Demander le pseudo puis afficher l'interface créateur
-function showPseudoForCreator(mode) {
-    // Toujours demander le pseudo (pré-remplir si sauvegardé)
-    const savedPseudo = localStorage.getItem('securepeer_pseudo');
-    
-    // Afficher la section pseudo
-    elements.pseudoSection.classList.remove('hidden');
-    
-    // Pré-remplir si un pseudo est sauvegardé
-    if (savedPseudo) {
-        elements.pseudoInputMain.value = savedPseudo;
-    } else {
-        elements.pseudoInputMain.value = '';
-    }
-    elements.pseudoInputMain?.focus();
-    
-    // Modifier le comportement du bouton confirmer
-    elements.pseudoConfirmBtn.onclick = () => {
-        const pseudoValue = elements.pseudoInputMain.value.trim();
-        
-        if (!pseudoValue || pseudoValue.length < 3) {
-            showToast('⚠️ Le pseudo doit faire au moins 3 caractères');
-            return;
-        }
-        
-        if (pseudoValue.length > 20) {
-            showToast('⚠️ Le pseudo doit faire maximum 20 caractères');
-            return;
-        }
-        
-        // Sauvegarder le pseudo
-        userPseudo = pseudoValue;
-        localStorage.setItem('securepeer_pseudo', pseudoValue);
-        
-        console.log('✅ Pseudo défini:', userPseudo);
-        
-        // Cacher la section pseudo et afficher l'interface
-        elements.pseudoSection.classList.add('hidden');
-        showCreatorInterface(mode);
-    };
-}
-
 // Afficher l'interface créateur selon le mode
 function showCreatorInterface(mode) {
     // Setup du chat et des fichiers
     setupChat();
     setupBothModeFiles();
     setupEventListeners();
-    
     // Afficher la section appropriée
     if (mode === 'chat') {
-        // Mode chat uniquement
         elements.senderSection.classList.remove('hidden');
         elements.dropZone.classList.add('hidden');
         elements.passwordBlock.classList.remove('hidden');
         elements.sendFileBtn.textContent = '💬 Démarrer le chat';
-        document.querySelector('.sender-header h2').textContent = '💬 Chat sécurisé';
-        document.querySelector('.section-desc').textContent = 'Démarrez une conversation chiffrée de bout en bout';
+        const header = document.querySelector('.sender-header h2');
+        if (header) header.textContent = '💬 Chat sécurisé';
+        const desc = document.querySelector('.section-desc');
+        if (desc) desc.textContent = 'Démarrez une conversation chiffrée de bout en bout';
     } else if (mode === 'file') {
-        // Mode fichier uniquement
         elements.senderSection.classList.remove('hidden');
         elements.dropZone.classList.remove('hidden');
     } else {
-        // Mode both : fichier + chat
         elements.senderSection.classList.remove('hidden');
         elements.dropZone.classList.add('hidden');
         elements.passwordBlock.classList.remove('hidden');
         elements.sendFileBtn.textContent = '🚀 Démarrer la session';
-        document.querySelector('.sender-header h2').textContent = '💬 Chat + Fichiers';
-        document.querySelector('.section-desc').textContent = 'Discutez et échangez des fichiers en temps réel';
+        const header = document.querySelector('.sender-header h2');
+        if (header) header.textContent = '💬 Chat + Fichiers';
+        const desc = document.querySelector('.section-desc');
+        if (desc) desc.textContent = 'Discutez et échangez des fichiers en temps réel';
     }
-    
     console.log('📋 Interface créateur affichée pour mode:', mode);
 }
 
@@ -2251,9 +2256,54 @@ function updateLanguage() {
 }
 
 // Appliquer la langue au chargement
-document.addEventListener('DOMContentLoaded', () => {
-    setupPseudoSection();
-    init();
+
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('🚀 [INIT] DOMContentLoaded - Démarrage de l\'application');
+    
+    // Vérifier d'abord si on a un hash (lien de partage)
+    const hash = window.location.hash.substring(1);
+    const hasShareLink = hash && hash.includes('_');
+    
+    // Récupérer la session stockée
+    const restored = restoreSessionFromStorage();
+    
+    console.log('🔍 [INIT] Hash URL:', hash || '(aucun)');
+    console.log('🔍 [INIT] Session stockée:', restored);
+    
+    // PRIORITÉ 1: Lien de partage (receiver qui arrive ou revient)
+    if (hasShareLink) {
+        // Extraire le roomId du hash
+        const hashRoomId = hash.split('_')[0];
+        console.log('🔗 [INIT] Lien de partage détecté, roomId:', hashRoomId);
+        
+        // Vérifier si c'est la même session que celle stockée
+        if (restored && restored.roomId === hashRoomId && restored.isReceiver) {
+            console.log('🔄 [INIT] Même session receiver, restauration...');
+            // Restaurer la session receiver existante
+            await restoreReceiverSession(restored, hash);
+        } else {
+            console.log('🆕 [INIT] Nouvelle visite via lien, flow receiver normal');
+            // Effacer toute ancienne session pour éviter les conflits
+            clearSessionStorage();
+            // Flow normal pour nouveau receiver
+            elements.landingPage.classList.add('hidden');
+            showPseudoThenConnect(hash);
+        }
+    }
+    // PRIORITÉ 2: Session créateur stockée (créateur qui rafraîchit)
+    else if (restored && restored.roomId && !restored.isReceiver && restored.sessionMode) {
+        console.log('👑 [INIT] Session créateur détectée, restauration...');
+        await restoreCreatorSession(restored);
+    }
+    // PRIORITÉ 3: Pas de session, afficher la landing page
+    else {
+        console.log('🏠 [INIT] Pas de session, affichage landing page');
+        // Effacer toute session invalide
+        if (restored) clearSessionStorage();
+        setupPseudoSection();
+        init();
+    }
+    
     setupLanguageSelector();
     updateLanguage();
     setupThemeToggle();
@@ -2271,6 +2321,189 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+// ===== FONCTIONS DE RESTAURATION DE SESSION =====
+
+async function restoreCreatorSession(restored) {
+    console.log('👑 [RESTORE-CREATOR] Début restauration créateur');
+    
+    // Restaurer les variables globales
+    roomId = restored.roomId;
+    sessionMode = restored.sessionMode;
+    isReceiver = false;
+    isCreator = true;
+    usePassword = restored.usePassword || false;
+    passwordSaltB64 = restored.passwordSaltB64 || '';
+    passwordIterations = restored.passwordIterations || KDF_ITERATIONS;
+    userPseudo = restored.pseudo || localStorage.getItem('securepeer_pseudo') || '';
+    
+    // Restaurer le odId
+    if (restored.odId) {
+        myOdId = restored.odId;
+        localStorage.setItem('securepeer_odid', myOdId);
+    }
+    
+    // Sauvegarder le pseudo
+    localStorage.setItem('securepeer_pseudo', userPseudo);
+    
+    console.log('   📦 roomId:', roomId);
+    console.log('   📋 mode:', sessionMode);
+    console.log('   👤 pseudo:', userPseudo);
+    console.log('   🔑 odId:', myOdId);
+    
+    // Cacher les sections non nécessaires
+    if (elements.landingPage) elements.landingPage.classList.add('hidden');
+    if (elements.modeSelection) elements.modeSelection.classList.add('hidden');
+    if (elements.pseudoSection) elements.pseudoSection.classList.add('hidden');
+    
+    // Régénérer la clé crypto
+    await generateCryptoKey();
+    console.log('🔐 [RESTORE-CREATOR] Clé crypto générée');
+    
+    // Restaurer ou régénérer fileInfo selon le mode
+    if (restored.fileInfo) {
+        // Utiliser le fileInfo stocké
+        fileInfo = restored.fileInfo;
+        console.log('   📄 fileInfo restauré:', fileInfo.name);
+    } else if (sessionMode === 'chat' || sessionMode === 'both') {
+        fileInfo = {
+            name: sessionMode === 'chat' ? 'Chat Session' : 'Chat + Files Session',
+            size: 0,
+            type: 'text/plain',
+            passwordRequired: usePassword,
+            chatOnly: sessionMode === 'chat',
+            bothMode: sessionMode === 'both'
+        };
+    } else {
+        fileInfo = {
+            name: 'Fichier',
+            size: 0,
+            type: 'application/octet-stream',
+            passwordRequired: usePassword
+        };
+    }
+    if (usePassword && passwordSaltB64) {
+        fileInfo.passwordSalt = passwordSaltB64;
+        fileInfo.passwordIterations = passwordIterations;
+    }
+    
+    // Afficher l'interface créateur
+    showCreatorInterface(sessionMode);
+    
+    // Afficher la section lien avec statut "en attente"
+    if (elements.linkSection) elements.linkSection.classList.remove('hidden');
+    if (elements.linkStatus) {
+        elements.linkStatus.innerHTML = `<span class="pulse"></span> Reconnexion en cours...`;
+    }
+    
+    // Se reconnecter au WebSocket
+    console.log('🌐 [RESTORE-CREATOR] Connexion WebSocket...');
+    connectWebSocket();
+    
+    showToast('Session créateur restaurée');
+}
+
+async function restoreReceiverSession(restored, hash) {
+    console.log('📥 [RESTORE-RECEIVER] Début restauration receiver');
+    
+    // Restaurer les variables globales
+    roomId = restored.roomId;
+    sessionMode = restored.sessionMode;
+    isReceiver = true;
+    isCreator = false;
+    usePassword = restored.usePassword || false;
+    passwordSaltB64 = restored.passwordSaltB64 || '';
+    passwordIterations = restored.passwordIterations || KDF_ITERATIONS;
+    userPseudo = restored.pseudo || localStorage.getItem('securepeer_pseudo') || '';
+    fileInfo = restored.fileInfo || null;
+    
+    // Sauvegarder le pseudo et odId
+    localStorage.setItem('securepeer_pseudo', userPseudo);
+    if (restored.odId) {
+        myOdId = restored.odId;
+        localStorage.setItem('securepeer_odid', myOdId);
+    }
+    
+    console.log('   📦 roomId:', roomId);
+    console.log('   📋 mode:', sessionMode);
+    console.log('   👤 pseudo:', userPseudo);
+    console.log('   🔑 odId:', myOdId);
+    console.log('   🔐 usePassword:', usePassword);
+    
+    // Cacher les sections non nécessaires
+    if (elements.landingPage) elements.landingPage.classList.add('hidden');
+    if (elements.modeSelection) elements.modeSelection.classList.add('hidden');
+    if (elements.pseudoSection) elements.pseudoSection.classList.add('hidden');
+    
+    // Afficher la section receiver
+    elements.receiverSection.classList.remove('hidden');
+    
+    // Gérer la clé crypto
+    if (usePassword) {
+        // Session protégée par mot de passe - redemander le mot de passe
+        console.log('🔐 [RESTORE-RECEIVER] Session protégée, redemander mot de passe');
+        elements.receiverStatus.textContent = 'Entrez le mot de passe pour reprendre la session';
+        elements.receiverPasswordBlock.classList.remove('hidden');
+        elements.receiverPasswordApply.onclick = async () => {
+            await applyReceiverPassword();
+            // Après application du mot de passe, se reconnecter
+            if (cryptoKey) {
+                console.log('🌐 [RESTORE-RECEIVER] Mot de passe OK, connexion WebSocket...');
+                connectWebSocket();
+            }
+        };
+        showToast('Entrez le mot de passe pour reprendre votre session');
+        return; // Ne pas continuer tant que le mot de passe n'est pas entré
+    }
+    
+    // Pas de mot de passe requis - importer la clé depuis le hash
+    const parts = hash.split('_');
+    const modeFromLink = parts[1];
+    let keyIndex = 2;
+    if (['file', 'chat', 'both'].includes(modeFromLink)) {
+        keyIndex = 2;
+    } else {
+        keyIndex = 1;
+    }
+    const keyString = parts.slice(keyIndex).join('_');
+    try {
+        await importKeyFromBase64(keyString);
+        console.log('🔐 [RESTORE-RECEIVER] Clé importée depuis le lien');
+    } catch (err) {
+        console.error('❌ [RESTORE-RECEIVER] Erreur import clé:', err);
+        showError('Erreur de restauration de session');
+        clearSessionStorage();
+        location.reload();
+        return;
+    }
+    
+    // Afficher le chat/fichiers selon le mode
+    if (sessionMode === 'chat' || sessionMode === 'both') {
+        elements.receiverChatSection.classList.remove('hidden');
+        if (sessionMode === 'both') {
+            elements.receiverBothFileSection.classList.remove('hidden');
+        }
+    }
+    
+    // Afficher les infos du fichier si disponibles
+    if (fileInfo) {
+        if (elements.incomingFileName) elements.incomingFileName.textContent = fileInfo.name || 'Fichier';
+        if (elements.incomingFileSize) elements.incomingFileSize.textContent = formatFileSize(fileInfo.size || 0);
+    }
+    
+    // Mettre à jour le statut
+    elements.receiverStatus.textContent = 'Reconnexion en cours...';
+    
+    // Setup chat et fichiers
+    setupChat();
+    setupBothModeFiles();
+    
+    // Se reconnecter au WebSocket
+    console.log('🌐 [RESTORE-RECEIVER] Connexion WebSocket...');
+    connectWebSocket();
+    
+    showToast('Session receiver restaurée');
+}
 
 function setupThemeToggle() {
     const themeToggle = document.getElementById('theme-toggle');
@@ -2300,29 +2533,25 @@ function setupPseudoSection() {
     if (elements.pseudoConfirmBtn) {
         elements.pseudoConfirmBtn.addEventListener('click', () => {
             const pseudoValue = elements.pseudoInputMain.value.trim();
-            
             if (!pseudoValue || pseudoValue.length < 3) {
                 showToast('⚠️ Le pseudo doit faire au moins 3 caractères');
                 return;
             }
-            
             if (pseudoValue.length > 20) {
                 showToast('⚠️ Le pseudo doit faire maximum 20 caractères');
                 return;
             }
-            
-            // Sauvegarder le pseudo
-            userPseudo = pseudoValue;
-            localStorage.setItem('securepeer_pseudo', pseudoValue);
-            
-            console.log('✅ Pseudo défini:', userPseudo);
-            
+            // Sauvegarder le pseudo UNIQUEMENT si pas déjà défini
+            if (!userPseudo || userPseudo !== pseudoValue) {
+                userPseudo = pseudoValue;
+                localStorage.setItem('securepeer_pseudo', pseudoValue);
+                console.log('✅ Pseudo défini:', userPseudo);
+            }
             // Cacher la section pseudo et continuer
             elements.pseudoSection.classList.add('hidden');
             continueInit();
         });
     }
-    
     // Permettre Entrée pour confirmer
     if (elements.pseudoInputMain) {
         elements.pseudoInputMain.addEventListener('keypress', (e) => {
@@ -2331,6 +2560,49 @@ function setupPseudoSection() {
             }
         });
     }
+}
+
+// Demander le pseudo puis afficher l'interface créateur
+function showPseudoForCreator(mode) {
+    console.log('🎭 [PSEUDO] showPseudoForCreator appelé pour mode:', mode);
+    // Toujours demander le pseudo (pré-remplir si sauvegardé)
+    const savedPseudo = localStorage.getItem('securepeer_pseudo');
+    // Afficher la section pseudo
+    elements.pseudoSection.classList.remove('hidden');
+    // Pré-remplir si un pseudo est sauvegardé
+    if (savedPseudo) {
+        elements.pseudoInputMain.value = savedPseudo;
+    } else {
+        elements.pseudoInputMain.value = '';
+    }
+    elements.pseudoInputMain?.focus();
+    
+    // Créer un nouveau bouton pour éviter les conflits d'event listeners
+    const oldBtn = elements.pseudoConfirmBtn;
+    const newBtn = oldBtn.cloneNode(true);
+    oldBtn.parentNode.replaceChild(newBtn, oldBtn);
+    elements.pseudoConfirmBtn = newBtn;
+    
+    // Attacher le handler spécifique pour le créateur
+    newBtn.addEventListener('click', () => {
+        const pseudoValue = elements.pseudoInputMain.value.trim();
+        if (!pseudoValue || pseudoValue.length < 3) {
+            showToast('⚠️ Le pseudo doit faire au moins 3 caractères');
+            return;
+        }
+        if (pseudoValue.length > 20) {
+            showToast('⚠️ Le pseudo doit faire maximum 20 caractères');
+            return;
+        }
+        // Sauvegarder le pseudo
+        userPseudo = pseudoValue;
+        localStorage.setItem('securepeer_pseudo', pseudoValue);
+        console.log('✅ [PSEUDO] Pseudo défini:', userPseudo);
+        // Cacher la section pseudo et afficher l'interface créateur
+        elements.pseudoSection.classList.add('hidden');
+        console.log('🎨 [PSEUDO] Appel de showCreatorInterface pour mode:', mode);
+        showCreatorInterface(mode);
+    });
 }
 
 // ===== SÉLECTION DU MODE =====

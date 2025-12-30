@@ -100,58 +100,68 @@ wss.on('connection', (ws) => {
                 }
                 
                 case 'join-room': {
-                    const room = rooms.get(data.roomId);
+                    console.log('🚪 [JOIN] Demande join-room reçue:');
+                    console.log('   📦 roomId:', data.roomId);
+                    console.log('   👤 pseudo:', data.pseudo);
+                    console.log('   🔑 odId demandé:', data.odId);
                     
+                    const room = rooms.get(data.roomId);
                     if (!room) {
+                        console.log('❌ [JOIN] Room non trouvée:', data.roomId);
                         ws.send(JSON.stringify({
                             type: 'error',
                             message: 'Lien expiré ou invalide.'
                         }));
                         return;
                     }
-                    
+                    console.log('✅ [JOIN] Room trouvée, participants actuels:', room.participants.size);
                     // Annuler le timer de suppression si quelqu'un rejoint
                     if (room.deleteTimer) {
                         clearTimeout(room.deleteTimer);
                         room.deleteTimer = null;
                         console.log(`✅ Timer de suppression annulé pour room ${data.roomId}`);
                     }
-                    
                     pseudo = data.pseudo || 'Anonyme';
                     currentRoom = data.roomId;
-                    
-                    // Ajouter ce participant
-                    room.participants.set(odId, { ws, pseudo, isCreator: false });
-                    
+                    // Gestion reconnexion : si odId fourni et déjà présent, réassocier
+                    let effectiveOdId = odId;
+                    if (data.odId && room.participants.has(data.odId)) {
+                        effectiveOdId = data.odId;
+                        // Mettre à jour le ws et le pseudo
+                        const old = room.participants.get(effectiveOdId);
+                        room.participants.set(effectiveOdId, { ws, pseudo, isCreator: old.isCreator });
+                    } else {
+                        // Nouveau participant
+                        room.participants.set(odId, { ws, pseudo, isCreator: false });
+                    }
                     // Envoyer la liste des participants existants au nouveau
                     const existingParticipants = [];
                     room.participants.forEach((p, odid) => {
-                        if (odid !== odId) {
+                        if (odid !== effectiveOdId) {
                             existingParticipants.push({ odId: odid, pseudo: p.pseudo, isCreator: p.isCreator });
                         }
                     });
-                    
                     ws.send(JSON.stringify({
                         type: 'room-joined',
                         roomId: data.roomId,
-                        odId: odId,
+                        odId: effectiveOdId,
                         fileInfo: room.fileInfo,
                         participants: existingParticipants
                     }));
-                    
                     // Notifier tous les autres participants
                     room.participants.forEach((p, odid) => {
-                        if (odid !== odId && p.ws.readyState === WebSocket.OPEN) {
+                        if (odid !== effectiveOdId && p.ws.readyState === WebSocket.OPEN) {
                             p.ws.send(JSON.stringify({
                                 type: 'peer-joined',
-                                odId: odId,
+                                odId: effectiveOdId,
                                 pseudo: pseudo,
                                 isCreator: false
                             }));
                         }
                     });
-                    
-                    console.log(`🤝 ${pseudo} rejoint la room: ${data.roomId} (${room.participants.size} participants)`);
+                    console.log(`✅ [JOIN] ${pseudo} a rejoint la room: ${data.roomId}`);
+                    console.log(`   👥 Total participants: ${room.participants.size}`);
+                    console.log(`   📋 Liste:`, Array.from(room.participants.keys()));
                     break;
                 }
                 
@@ -189,6 +199,82 @@ wss.on('connection', (ws) => {
                                 type: 'receiver-ready',
                                 odId: odId,
                                 pseudo: pseudo
+                            }));
+                        }
+                    });
+                    break;
+                }
+                
+                case 'rejoin-room': {
+                    console.log('🔄 [REJOIN] Demande rejoin-room reçue:');
+                    console.log('   📦 roomId:', data.roomId);
+                    console.log('   👤 pseudo:', data.pseudo);
+                    console.log('   🔑 odId demandé:', data.odId);
+                    console.log('   📋 rooms existantes:', Array.from(rooms.keys()));
+                    
+                    // Créateur qui se reconnecte à sa room existante
+                    const room = rooms.get(data.roomId);
+                    if (!room) {
+                        console.log('❌ [REJOIN] Room non trouvée:', data.roomId);
+                        ws.send(JSON.stringify({
+                            type: 'error',
+                            message: 'Room expirée ou invalide. Veuillez créer une nouvelle session.'
+                        }));
+                        return;
+                    }
+                    console.log('✅ [REJOIN] Room trouvée, participants actuels:', Array.from(room.participants.keys()));
+                    // Annuler le timer de suppression si quelqu'un rejoint
+                    if (room.deleteTimer) {
+                        clearTimeout(room.deleteTimer);
+                        room.deleteTimer = null;
+                        console.log(`✅ Timer de suppression annulé pour room ${data.roomId}`);
+                    }
+                    pseudo = data.pseudo || 'Anonyme';
+                    currentRoom = data.roomId;
+                    // Gestion reconnexion : si odId fourni et déjà présent, réassocier
+                    let effectiveOdId = odId;
+                    if (data.odId && room.participants.has(data.odId)) {
+                        effectiveOdId = data.odId;
+                        odId = effectiveOdId; // Réutiliser l'ancien odId
+                        // Mettre à jour le ws
+                        const old = room.participants.get(effectiveOdId);
+                        room.participants.set(effectiveOdId, { ws, pseudo, isCreator: old.isCreator });
+                        console.log(`🔄 Créateur ${pseudo} reconnecté à la room ${data.roomId}`);
+                    } else if (room.creatorId === data.odId) {
+                        // Le créateur se reconnecte avec son ancien odId
+                        effectiveOdId = data.odId;
+                        odId = effectiveOdId;
+                        room.participants.set(effectiveOdId, { ws, pseudo, isCreator: true });
+                        console.log(`🔄 Créateur ${pseudo} reconnecté à la room ${data.roomId} (nouveau ws)`);
+                    } else {
+                        // Nouveau participant comme créateur fallback
+                        room.participants.set(odId, { ws, pseudo, isCreator: false });
+                    }
+                    // Envoyer la liste des participants existants
+                    const existingParticipants = [];
+                    room.participants.forEach((p, odid) => {
+                        if (odid !== effectiveOdId) {
+                            existingParticipants.push({ odId: odid, pseudo: p.pseudo, isCreator: p.isCreator });
+                        }
+                    });
+                    const rejoinResponse = {
+                        type: 'room-rejoined',
+                        roomId: data.roomId,
+                        odId: effectiveOdId,
+                        fileInfo: room.fileInfo,
+                        participants: existingParticipants,
+                        hasReceiver: room.participants.size > 1
+                    };
+                    console.log('📤 [REJOIN] Envoi room-rejoined:', rejoinResponse);
+                    ws.send(JSON.stringify(rejoinResponse));
+                    // Notifier tous les autres participants
+                    room.participants.forEach((p, odid) => {
+                        if (odid !== effectiveOdId && p.ws.readyState === WebSocket.OPEN) {
+                            p.ws.send(JSON.stringify({
+                                type: 'peer-joined',
+                                odId: effectiveOdId,
+                                pseudo: pseudo,
+                                isCreator: true
                             }));
                         }
                     });
