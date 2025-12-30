@@ -6,6 +6,11 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 
+// ===== LIMITES DE SÉCURITÉ =====
+const MAX_MESSAGE_SIZE = 1024 * 1024; // 1 MB max par message WebSocket
+const MAX_PSEUDO_LENGTH = 50;
+const MAX_ROOM_PARTICIPANTS = 20;
+
 // ===== RATE LIMITING =====
 const RATE_LIMITS = {
     connection: { max: 10, windowMs: 60000 },    // 10 connexions/minute
@@ -141,6 +146,16 @@ wss.on('connection', (ws, req) => {
     
     ws.on('message', (message) => {
         try {
+            // Vérifier la taille du message
+            if (message.length > MAX_MESSAGE_SIZE) {
+                console.log(`🚫 [SECURITY] Message trop volumineux (${message.length} bytes) depuis ${ip}`);
+                ws.send(JSON.stringify({ 
+                    type: 'error', 
+                    message: 'Message trop volumineux. Limite : 1 MB.' 
+                }));
+                return;
+            }
+            
             // Rate limit sur les messages généraux
             const msgLimit = checkRateLimit(ip, 'message');
             if (!msgLimit.allowed) {
@@ -167,8 +182,11 @@ wss.on('connection', (ws, req) => {
                         return;
                     }
                     
+                    // Valider et limiter le pseudo
+                    pseudo = (data.pseudo || 'Anonyme').substring(0, MAX_PSEUDO_LENGTH).trim();
+                    if (!pseudo) pseudo = 'Anonyme';
+                    
                     const roomId = uuidv4().substring(0, 8);
-                    pseudo = data.pseudo || 'Anonyme';
                     isCreator = true;
                     
                     const participants = new Map();
@@ -230,13 +248,28 @@ wss.on('connection', (ws, req) => {
                     }
                     console.log('✅ [JOIN] Room trouvée, participants actuels:', room.participants.size);
                     console.log('   📋 Participants existants:', Array.from(room.participants.keys()));
+                    
+                    // Limiter le nombre de participants
+                    if (room.participants.size >= MAX_ROOM_PARTICIPANTS && !data.odId) {
+                        console.log(`🚫 [SECURITY] Room pleine (${room.participants.size}/${MAX_ROOM_PARTICIPANTS})`);
+                        ws.send(JSON.stringify({
+                            type: 'error',
+                            message: `Cette session est complète (maximum ${MAX_ROOM_PARTICIPANTS} participants).`
+                        }));
+                        return;
+                    }
+                    
                     // Annuler le timer de suppression si quelqu'un rejoint
                     if (room.deleteTimer) {
                         clearTimeout(room.deleteTimer);
                         room.deleteTimer = null;
                         console.log(`✅ Timer de suppression annulé pour room ${data.roomId}`);
                     }
-                    pseudo = data.pseudo || 'Anonyme';
+                    
+                    // Valider et limiter le pseudo
+                    pseudo = (data.pseudo || 'Anonyme').substring(0, MAX_PSEUDO_LENGTH).trim();
+                    if (!pseudo) pseudo = 'Anonyme';
+                    
                     currentRoom = data.roomId;
                     // Gestion reconnexion : si odId fourni et déjà présent, réassocier
                     let effectiveOdId = odId;
