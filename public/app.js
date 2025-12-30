@@ -1403,8 +1403,18 @@ function updateConnectedUsersDropdown() {
 
 // ===== SAUVEGARDE ET RESTAURATION DE SESSION =====
 
-function saveSessionToStorage() {
+async function saveSessionToStorage() {
     try {
+        // Exporter la clé crypto si elle existe (pour pouvoir la restaurer)
+        let cryptoKeyB64 = null;
+        if (cryptoKey) {
+            try {
+                cryptoKeyB64 = await exportKeyToBase64();
+            } catch (e) {
+                console.warn('⚠️ Impossible d\'exporter la clé crypto:', e);
+            }
+        }
+        
         const session = {
             roomId: roomId,
             sessionMode: sessionMode,
@@ -1419,10 +1429,12 @@ function saveSessionToStorage() {
             isCreator: isCreator || false,
             // include minimal fileInfo to restore UI/state if available
             fileInfo: fileInfo || null,
+            // Stocker la clé crypto pour restauration
+            cryptoKeyB64: cryptoKeyB64,
             timestamp: Date.now()
         };
         localStorage.setItem('securepeer_session', JSON.stringify(session));
-        console.log('💾 Session sauvegardée');
+        console.log('💾 Session sauvegardée (avec clé crypto)');
     } catch (err) {
         console.error('❌ Erreur sauvegarde session:', err);
     }
@@ -2356,9 +2368,21 @@ async function restoreCreatorSession(restored) {
     if (elements.modeSelection) elements.modeSelection.classList.add('hidden');
     if (elements.pseudoSection) elements.pseudoSection.classList.add('hidden');
     
-    // Régénérer la clé crypto
-    await generateCryptoKey();
-    console.log('🔐 [RESTORE-CREATOR] Clé crypto générée');
+    // Restaurer la clé crypto depuis la session stockée (au lieu d'en générer une nouvelle)
+    if (restored.cryptoKeyB64) {
+        try {
+            await importKeyFromBase64(restored.cryptoKeyB64);
+            console.log('🔐 [RESTORE-CREATOR] Clé crypto RESTAURÉE depuis localStorage');
+        } catch (err) {
+            console.error('❌ [RESTORE-CREATOR] Erreur import clé, génération nouvelle:', err);
+            await generateCryptoKey();
+            console.log('🔐 [RESTORE-CREATOR] Nouvelle clé crypto générée (fallback)');
+        }
+    } else {
+        // Pas de clé stockée, en générer une nouvelle (ne devrait pas arriver)
+        await generateCryptoKey();
+        console.log('🔐 [RESTORE-CREATOR] Nouvelle clé crypto générée (pas de clé stockée)');
+    }
     
     // Restaurer ou régénérer fileInfo selon le mode
     if (restored.fileInfo) {
@@ -2429,6 +2453,7 @@ async function restoreReceiverSession(restored, hash) {
     console.log('   👤 pseudo:', userPseudo);
     console.log('   🔑 odId:', myOdId);
     console.log('   🔐 usePassword:', usePassword);
+    console.log('   🔐 cryptoKeyB64 stocké:', !!restored.cryptoKeyB64);
     
     // Cacher les sections non nécessaires
     if (elements.landingPage) elements.landingPage.classList.add('hidden');
@@ -2439,8 +2464,8 @@ async function restoreReceiverSession(restored, hash) {
     elements.receiverSection.classList.remove('hidden');
     
     // Gérer la clé crypto
-    if (usePassword) {
-        // Session protégée par mot de passe - redemander le mot de passe
+    if (usePassword && !restored.cryptoKeyB64) {
+        // Session protégée par mot de passe ET pas de clé stockée - redemander le mot de passe
         console.log('🔐 [RESTORE-RECEIVER] Session protégée, redemander mot de passe');
         elements.receiverStatus.textContent = 'Entrez le mot de passe pour reprendre la session';
         elements.receiverPasswordBlock.classList.remove('hidden');
@@ -2456,25 +2481,41 @@ async function restoreReceiverSession(restored, hash) {
         return; // Ne pas continuer tant que le mot de passe n'est pas entré
     }
     
-    // Pas de mot de passe requis - importer la clé depuis le hash
-    const parts = hash.split('_');
-    const modeFromLink = parts[1];
-    let keyIndex = 2;
-    if (['file', 'chat', 'both'].includes(modeFromLink)) {
-        keyIndex = 2;
-    } else {
-        keyIndex = 1;
-    }
-    const keyString = parts.slice(keyIndex).join('_');
-    try {
-        await importKeyFromBase64(keyString);
-        console.log('🔐 [RESTORE-RECEIVER] Clé importée depuis le lien');
-    } catch (err) {
-        console.error('❌ [RESTORE-RECEIVER] Erreur import clé:', err);
-        showError('Erreur de restauration de session');
-        clearSessionStorage();
-        location.reload();
-        return;
+    // Restaurer la clé depuis la session stockée (priorité) ou depuis le hash (fallback)
+    if (restored.cryptoKeyB64) {
+        try {
+            await importKeyFromBase64(restored.cryptoKeyB64);
+            console.log('🔐 [RESTORE-RECEIVER] Clé crypto RESTAURÉE depuis localStorage');
+        } catch (err) {
+            console.error('❌ [RESTORE-RECEIVER] Erreur import clé stockée:', err);
+            // Fallback: essayer depuis le hash
+            if (hash && !usePassword) {
+                const parts = hash.split('_');
+                const modeFromLink = parts[1];
+                let keyIndex = ['file', 'chat', 'both'].includes(modeFromLink) ? 2 : 1;
+                const keyString = parts.slice(keyIndex).join('_');
+                await importKeyFromBase64(keyString);
+                console.log('🔐 [RESTORE-RECEIVER] Clé importée depuis hash (fallback)');
+            } else {
+                throw err;
+            }
+        }
+    } else if (hash && !usePassword) {
+        // Pas de clé stockée - importer la clé depuis le hash
+        const parts = hash.split('_');
+        const modeFromLink = parts[1];
+        let keyIndex = ['file', 'chat', 'both'].includes(modeFromLink) ? 2 : 1;
+        const keyString = parts.slice(keyIndex).join('_');
+        try {
+            await importKeyFromBase64(keyString);
+            console.log('🔐 [RESTORE-RECEIVER] Clé importée depuis le lien');
+        } catch (err) {
+            console.error('❌ [RESTORE-RECEIVER] Erreur import clé:', err);
+            showError('Erreur de restauration de session');
+            clearSessionStorage();
+            location.reload();
+            return;
+        }
     }
     
     // Afficher le chat/fichiers selon le mode
