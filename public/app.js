@@ -1624,27 +1624,31 @@ function showCreatorInterface(mode) {
     setupChat();
     setupBothModeFiles();
     setupEventListeners();
+    
+    // Récupérer les éléments de header
+    const header = document.querySelector('#sender-section .sender-header h2');
+    const desc = document.querySelector('#sender-section .section-desc');
+    
     // Afficher la section appropriée
     if (mode === 'chat') {
         elements.senderSection.classList.remove('hidden');
         elements.dropZone.classList.add('hidden');
         elements.passwordBlock.classList.remove('hidden');
         elements.sendFileBtn.textContent = '💬 Démarrer le chat';
-        const header = document.querySelector('.sender-header h2');
         if (header) header.textContent = '💬 Chat sécurisé';
-        const desc = document.querySelector('.section-desc');
         if (desc) desc.textContent = 'Démarrez une conversation chiffrée de bout en bout';
     } else if (mode === 'file') {
         elements.senderSection.classList.remove('hidden');
         elements.dropZone.classList.remove('hidden');
+        if (header) header.textContent = '📤 Envoyer un fichier';
+        if (desc) desc.textContent = 'Choisissez un fichier et partagez le lien sécurisé';
     } else {
+        // mode 'both'
         elements.senderSection.classList.remove('hidden');
         elements.dropZone.classList.add('hidden');
         elements.passwordBlock.classList.remove('hidden');
         elements.sendFileBtn.textContent = '🚀 Démarrer la session';
-        const header = document.querySelector('.sender-header h2');
         if (header) header.textContent = '💬 Chat + Fichiers';
-        const desc = document.querySelector('.section-desc');
         if (desc) desc.textContent = 'Discutez et échangez des fichiers en temps réel';
     }
     console.log('📋 Interface créateur affichée pour mode:', mode);
@@ -2175,11 +2179,19 @@ function updateLanguage() {
     const subtitleEl = document.querySelector('.subtitle');
     if (subtitleEl) subtitleEl.textContent = t.subtitle;
     
-    // Mettre à jour le header sender
+    // Mettre à jour le header sender - selon le mode de session actuel
     const senderHeader = document.querySelector('.sender-header h2');
-    if (senderHeader) senderHeader.textContent = t.senderHeader;
     const sectionDesc = document.querySelector('.section-desc');
-    if (sectionDesc) sectionDesc.textContent = t.sectionDesc;
+    if (sessionMode === 'chat') {
+        if (senderHeader) senderHeader.textContent = t.chatTitle || '💬 Chat sécurisé';
+        if (sectionDesc) sectionDesc.textContent = t.modeChatDesc || 'Discutez en temps réel, chiffré E2E';
+    } else if (sessionMode === 'both') {
+        if (senderHeader) senderHeader.textContent = t.chatFilesTitle || '💬 Chat + Fichiers';
+        if (sectionDesc) sectionDesc.textContent = t.modeBothDesc || 'Transférez et discutez simultanément';
+    } else {
+        if (senderHeader) senderHeader.textContent = t.senderHeader;
+        if (sectionDesc) sectionDesc.textContent = t.sectionDesc;
+    }
     
     const dropTextEl = document.querySelector('.drop-zone-content p');
     if (dropTextEl) dropTextEl.textContent = t.dropZone;
