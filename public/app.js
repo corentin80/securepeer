@@ -173,6 +173,14 @@ function showError(message) {
     elements.errorSection.classList.remove('hidden');
 }
 
+// ===== SÉCURITÉ - Échappement HTML pour prévenir XSS =====
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
 function toBase64(u8arr) {
     return btoa(String.fromCharCode(...u8arr));
 }
@@ -2887,7 +2895,7 @@ function handleBothFileSelect(files, isReceiverSide) {
         itemDiv.innerHTML = `
             <span class="file-icon">📄</span>
             <div class="file-details">
-                <span class="file-name">${file.name}</span>
+                <span class="file-name">${escapeHtml(file.name)}</span>
                 <span class="file-size">${formatFileSize(file.size)}</span>
             </div>
             <span class="file-status pending">En attente</span>
@@ -3005,8 +3013,8 @@ async function handleBothFileMeta(data) {
     itemDiv.innerHTML = `
         <span class="file-icon">📥</span>
         <div class="file-details">
-            <span class="file-sender">${incomingBothFile.senderPseudo}</span>
-            <span class="file-name">${data.name}</span>
+            <span class="file-sender">${escapeHtml(incomingBothFile.senderPseudo)}</span>
+            <span class="file-name">${escapeHtml(data.name)}</span>
             <span class="file-size">${formatFileSize(data.size)}</span>
         </div>
         <span class="file-status pending">Réception...</span>

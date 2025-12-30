@@ -6,6 +6,63 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 
+// ===== RATE LIMITING =====
+const RATE_LIMITS = {
+    connection: { max: 10, windowMs: 60000 },    // 10 connexions/minute
+    createRoom: { max: 5, windowMs: 60000 },     // 5 rooms/minute
+    joinRoom: { max: 20, windowMs: 60000 },      // 20 joins/minute
+    message: { max: 100, windowMs: 60000 }       // 100 messages/minute
+};
+
+const rateLimitStore = new Map(); // IP -> { action: { count, resetTime } }
+
+function getRateLimitKey(ip, action) {
+    return `${ip}:${action}`;
+}
+
+function checkRateLimit(ip, action) {
+    const limit = RATE_LIMITS[action];
+    if (!limit) return { allowed: true };
+    
+    const now = Date.now();
+    const key = getRateLimitKey(ip, action);
+    
+    if (!rateLimitStore.has(key)) {
+        rateLimitStore.set(key, { count: 1, resetTime: now + limit.windowMs });
+        return { allowed: true, remaining: limit.max - 1 };
+    }
+    
+    const record = rateLimitStore.get(key);
+    
+    // Reset si la fenêtre est expirée
+    if (now > record.resetTime) {
+        rateLimitStore.set(key, { count: 1, resetTime: now + limit.windowMs });
+        return { allowed: true, remaining: limit.max - 1 };
+    }
+    
+    // Vérifier la limite
+    if (record.count >= limit.max) {
+        const retryAfter = Math.ceil((record.resetTime - now) / 1000);
+        return { allowed: false, retryAfter, remaining: 0 };
+    }
+    
+    // Incrémenter le compteur
+    record.count++;
+    return { allowed: true, remaining: limit.max - record.count };
+}
+
+// Nettoyage périodique des entrées expirées (toutes les 5 minutes)
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, record] of rateLimitStore) {
+        if (now > record.resetTime) {
+            rateLimitStore.delete(key);
+        }
+    }
+}, 5 * 60 * 1000);
+
+// ===== FIN RATE LIMITING =====
+
 // Handler HTTP(S) pour servir les fichiers statiques
 const requestHandler = (req, res) => {
     let filePath = req.url === '/' ? '/index.html' : req.url;
@@ -60,8 +117,22 @@ const rooms = new Map();
 // Délai avant suppression d'une room vide (5 minutes)
 const ROOM_EMPTY_TIMEOUT = 5 * 60 * 1000;
 
-wss.on('connection', (ws) => {
-    console.log('🔌 Nouvelle connexion WebSocket');
+wss.on('connection', (ws, req) => {
+    // Récupérer l'IP du client (supporte reverse proxy)
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
+               req.headers['x-real-ip'] || 
+               req.socket.remoteAddress || 
+               'unknown';
+    
+    // Rate limit sur les connexions
+    const connLimit = checkRateLimit(ip, 'connection');
+    if (!connLimit.allowed) {
+        console.log(`🚫 [RATE LIMIT] Connexion refusée pour ${ip} (retry in ${connLimit.retryAfter}s)`);
+        ws.close(1008, 'Too many connections. Please wait.');
+        return;
+    }
+    
+    console.log(`🔌 Nouvelle connexion WebSocket depuis ${ip}`);
     
     let currentRoom = null;
     let odId = uuidv4().substring(0, 8); // ID unique pour ce participant
@@ -70,10 +141,32 @@ wss.on('connection', (ws) => {
     
     ws.on('message', (message) => {
         try {
+            // Rate limit sur les messages généraux
+            const msgLimit = checkRateLimit(ip, 'message');
+            if (!msgLimit.allowed) {
+                console.log(`🚫 [RATE LIMIT] Message refusé pour ${ip}`);
+                ws.send(JSON.stringify({ 
+                    type: 'error', 
+                    message: `Trop de requêtes. Réessayez dans ${msgLimit.retryAfter} secondes.` 
+                }));
+                return;
+            }
+            
             const data = JSON.parse(message);
             
             switch (data.type) {
                 case 'create-room': {
+                    // Rate limit spécifique pour création de room
+                    const createLimit = checkRateLimit(ip, 'createRoom');
+                    if (!createLimit.allowed) {
+                        console.log(`🚫 [RATE LIMIT] Création room refusée pour ${ip}`);
+                        ws.send(JSON.stringify({ 
+                            type: 'error', 
+                            message: `Trop de sessions créées. Réessayez dans ${createLimit.retryAfter} secondes.` 
+                        }));
+                        return;
+                    }
+                    
                     const roomId = uuidv4().substring(0, 8);
                     pseudo = data.pseudo || 'Anonyme';
                     isCreator = true;
@@ -100,10 +193,31 @@ wss.on('connection', (ws) => {
                 }
                 
                 case 'join-room': {
+                    // Rate limit spécifique pour rejoindre une room
+                    const joinLimit = checkRateLimit(ip, 'joinRoom');
+                    if (!joinLimit.allowed) {
+                        console.log(`🚫 [RATE LIMIT] Join room refusé pour ${ip}`);
+                        ws.send(JSON.stringify({ 
+                            type: 'error', 
+                            message: `Trop de tentatives. Réessayez dans ${joinLimit.retryAfter} secondes.` 
+                        }));
+                        return;
+                    }
+                    
                     console.log('🚪 [JOIN] Demande join-room reçue:');
                     console.log('   📦 roomId:', data.roomId);
                     console.log('   👤 pseudo:', data.pseudo);
                     console.log('   🔑 odId demandé:', data.odId);
+                    
+                    // Validation du format roomId
+                    if (!data.roomId || !/^[a-f0-9]{8}$/i.test(data.roomId)) {
+                        console.log('❌ [JOIN] Format roomId invalide:', data.roomId);
+                        ws.send(JSON.stringify({
+                            type: 'error',
+                            message: 'Lien invalide.'
+                        }));
+                        return;
+                    }
                     
                     const room = rooms.get(data.roomId);
                     if (!room) {
