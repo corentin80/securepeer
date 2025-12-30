@@ -46,6 +46,12 @@ let chatMessages = [];
 let userPseudo = ''; // Pseudo de l'utilisateur actuel
 let remoteUserPseudo = ''; // Pseudo de l'autre utilisateur (legacy, pour 1:1)
 
+// ===== ECDH (Diffie-Hellman) État =====
+let ecdhKeyPair = null; // Ma paire de clés ECDH {privateKey, publicKey}
+let ecdhPublicKeyB64 = null; // Ma clé publique en base64 pour partage
+let pendingKeyExchanges = new Map(); // Map<odId, {publicKeyB64, resolved}> - échanges en attente
+let keyExchangeResolvers = new Map(); // Map<odId, {resolve, reject}> - promesses d'échange
+
 // ===== ÉLÉMENTS DOM =====
 const elements = {
     // Landing page
@@ -301,6 +307,200 @@ async function calculateHash(data) {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// ===== ECDH (Diffie-Hellman Elliptic Curve) =====
+
+/**
+ * Génère une paire de clés ECDH (Elliptic Curve Diffie-Hellman)
+ * Utilise la courbe P-256 (secp256r1) recommandée par le NIST
+ */
+async function generateECDHKeyPair() {
+    ecdhKeyPair = await window.crypto.subtle.generateKey(
+        {
+            name: 'ECDH',
+            namedCurve: 'P-256'
+        },
+        true, // extractable
+        ['deriveKey', 'deriveBits']
+    );
+    
+    // Exporter la clé publique en format raw pour partage
+    const publicKeyRaw = await window.crypto.subtle.exportKey('raw', ecdhKeyPair.publicKey);
+    ecdhPublicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyRaw)));
+    
+    console.log('🔐 Paire de clés ECDH générée');
+    return ecdhPublicKeyB64;
+}
+
+/**
+ * Exporte la paire ECDH pour stockage en localStorage
+ */
+async function exportECDHKeyPair() {
+    if (!ecdhKeyPair) return null;
+    
+    const privateKeyJwk = await window.crypto.subtle.exportKey('jwk', ecdhKeyPair.privateKey);
+    const publicKeyRaw = await window.crypto.subtle.exportKey('raw', ecdhKeyPair.publicKey);
+    
+    return {
+        privateKeyJwk: privateKeyJwk,
+        publicKeyB64: btoa(String.fromCharCode(...new Uint8Array(publicKeyRaw)))
+    };
+}
+
+/**
+ * Importe une paire ECDH depuis localStorage
+ */
+async function importECDHKeyPair(exported) {
+    if (!exported || !exported.privateKeyJwk || !exported.publicKeyB64) return false;
+    
+    try {
+        const privateKey = await window.crypto.subtle.importKey(
+            'jwk',
+            exported.privateKeyJwk,
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true,
+            ['deriveKey', 'deriveBits']
+        );
+        
+        // Reconstruire la clé publique depuis le JWK (la clé publique est incluse dans le JWK privé)
+        const publicKey = await window.crypto.subtle.importKey(
+            'jwk',
+            { ...exported.privateKeyJwk, d: undefined }, // Retirer la partie privée
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true,
+            []
+        );
+        
+        ecdhKeyPair = { privateKey, publicKey };
+        ecdhPublicKeyB64 = exported.publicKeyB64;
+        
+        console.log('🔐 Paire ECDH restaurée depuis localStorage');
+        return true;
+    } catch (err) {
+        console.error('❌ Erreur import ECDH:', err);
+        return false;
+    }
+}
+
+/**
+ * Dérive une clé AES-256-GCM depuis le secret partagé ECDH
+ * @param {string} theirPublicKeyB64 - Clé publique de l'autre partie en base64
+ */
+async function deriveSharedKey(theirPublicKeyB64) {
+    if (!ecdhKeyPair) {
+        throw new Error('Paire ECDH non initialisée');
+    }
+    
+    // Importer la clé publique de l'autre partie
+    const theirPublicKeyRaw = Uint8Array.from(atob(theirPublicKeyB64), c => c.charCodeAt(0));
+    const theirPublicKey = await window.crypto.subtle.importKey(
+        'raw',
+        theirPublicKeyRaw,
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,
+        []
+    );
+    
+    // Dériver les bits partagés
+    const sharedBits = await window.crypto.subtle.deriveBits(
+        {
+            name: 'ECDH',
+            public: theirPublicKey
+        },
+        ecdhKeyPair.privateKey,
+        256 // 256 bits
+    );
+    
+    // Utiliser HKDF pour dériver une clé AES robuste
+    const sharedKeyMaterial = await window.crypto.subtle.importKey(
+        'raw',
+        sharedBits,
+        { name: 'HKDF' },
+        false,
+        ['deriveKey']
+    );
+    
+    cryptoKey = await window.crypto.subtle.deriveKey(
+        {
+            name: 'HKDF',
+            hash: 'SHA-256',
+            salt: new TextEncoder().encode('SecurePeer-ECDH-Salt-v1'),
+            info: new TextEncoder().encode('SecurePeer-AES-Key')
+        },
+        sharedKeyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        true, // extractable pour pouvoir stocker
+        ['encrypt', 'decrypt']
+    );
+    
+    // Générer un IV déterministe basé sur le secret partagé (pour la compatibilité)
+    const ivMaterial = await window.crypto.subtle.digest('SHA-256', 
+        new TextEncoder().encode(btoa(String.fromCharCode(...new Uint8Array(sharedBits))) + '-IV')
+    );
+    cryptoIV = new Uint8Array(ivMaterial).slice(0, 12);
+    
+    console.log('🔐 Clé AES dérivée via ECDH');
+    return true;
+}
+
+/**
+ * Envoie ma clé publique ECDH à un participant via WebSocket
+ */
+function sendECDHPublicKey(targetOdId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    
+    ws.send(JSON.stringify({
+        type: 'ecdh-public-key',
+        targetOdId: targetOdId,
+        publicKeyB64: ecdhPublicKeyB64
+    }));
+    
+    console.log('📤 Clé publique ECDH envoyée à:', targetOdId);
+}
+
+/**
+ * Attend la réception de la clé publique d'un participant
+ * @returns {Promise<string>} La clé publique reçue
+ */
+function waitForECDHPublicKey(fromOdId, timeoutMs = 30000) {
+    return new Promise((resolve, reject) => {
+        // Vérifier si on a déjà reçu la clé
+        if (pendingKeyExchanges.has(fromOdId)) {
+            const exchange = pendingKeyExchanges.get(fromOdId);
+            if (exchange.publicKeyB64) {
+                resolve(exchange.publicKeyB64);
+                return;
+            }
+        }
+        
+        // Attendre la réception
+        keyExchangeResolvers.set(fromOdId, { resolve, reject });
+        
+        // Timeout
+        setTimeout(() => {
+            if (keyExchangeResolvers.has(fromOdId)) {
+                keyExchangeResolvers.delete(fromOdId);
+                reject(new Error('Timeout ECDH key exchange'));
+            }
+        }, timeoutMs);
+    });
+}
+
+/**
+ * Handler pour la réception d'une clé publique ECDH
+ */
+function handleECDHPublicKey(fromOdId, publicKeyB64) {
+    console.log('📥 Clé publique ECDH reçue de:', fromOdId);
+    
+    pendingKeyExchanges.set(fromOdId, { publicKeyB64, resolved: true });
+    
+    // Résoudre la promesse en attente si elle existe
+    if (keyExchangeResolvers.has(fromOdId)) {
+        const { resolve } = keyExchangeResolvers.get(fromOdId);
+        keyExchangeResolvers.delete(fromOdId);
+        resolve(publicKeyB64);
+    }
+}
+
 // ===== WEBSOCKET =====
 
 function connectWebSocket() {
@@ -461,6 +661,23 @@ function handleWebSocketMessage(data) {
                 elements.receiverPasswordBlock.classList.remove('hidden');
                 console.log('🔓 receiverPasswordBlock rendu visible');
                 elements.receiverPasswordApply.onclick = applyReceiverPassword;
+            } else if (ecdhKeyPair && ecdhPublicKeyB64) {
+                // Mode ECDH : envoyer ma clé publique au créateur pour dériver la clé partagée
+                console.log('🔐 [ECDH] Envoi de ma clé publique au créateur...');
+                elements.receiverStatus.textContent = 'Échange de clés sécurisé...';
+                
+                // Trouver le créateur dans les participants
+                const creatorOdId = Array.from(participants.entries())
+                    .find(([id, p]) => p.isCreator)?.[0];
+                
+                if (creatorOdId) {
+                    sendECDHPublicKey(creatorOdId);
+                    // La dérivation se fera quand on recevra la clé publique du créateur
+                } else {
+                    console.error('❌ [ECDH] Créateur non trouvé dans les participants');
+                    showError('Erreur: créateur de la session introuvable.');
+                }
+                saveSessionToStorage();
             } else {
                 console.log('✅ Pas de mot de passe requis');
                 elements.receiverStatus.textContent = 'Connexion P2P en cours...';
@@ -581,6 +798,52 @@ function handleWebSocketMessage(data) {
                 }, 3000);
             } else {
                 showError(data.message);
+            }
+            break;
+            
+        case 'ecdh-public-key':
+            // Réception de la clé publique ECDH d'un autre participant
+            console.log('🔐 [ECDH] Clé publique reçue de:', data.fromId);
+            handleECDHPublicKey(data.fromId, data.publicKeyB64);
+            
+            // Si je suis le créateur, dériver la clé et envoyer ma clé publique en retour
+            if (isCreator && ecdhKeyPair && !cryptoKey) {
+                (async () => {
+                    try {
+                        // Dériver la clé AES partagée
+                        await deriveSharedKey(data.publicKeyB64);
+                        console.log('🔐 [ECDH] Clé AES dérivée avec succès (créateur)');
+                        
+                        // Envoyer ma clé publique en retour
+                        sendECDHPublicKey(data.fromId);
+                        
+                        // Sauvegarder la session avec la nouvelle clé
+                        saveSessionToStorage();
+                    } catch (err) {
+                        console.error('❌ [ECDH] Erreur dérivation clé:', err);
+                        showError('Erreur lors de l\'échange de clés sécurisé.');
+                    }
+                })();
+            }
+            // Si je suis receiver et que j'attends une clé
+            else if (isReceiver && ecdhKeyPair && !cryptoKey) {
+                (async () => {
+                    try {
+                        // Dériver la clé AES partagée
+                        await deriveSharedKey(data.publicKeyB64);
+                        console.log('🔐 [ECDH] Clé AES dérivée avec succès (receiver)');
+                        
+                        // Sauvegarder la session
+                        saveSessionToStorage();
+                        
+                        // Maintenant on peut initier les connexions P2P
+                        elements.receiverStatus.textContent = 'Clé sécurisée établie, connexion P2P...';
+                        initPeersWithExistingParticipants();
+                    } catch (err) {
+                        console.error('❌ [ECDH] Erreur dérivation clé:', err);
+                        showError('Erreur lors de l\'échange de clés sécurisé.');
+                    }
+                })();
             }
             break;
     }
@@ -1066,9 +1329,8 @@ async function generateShareLink() {
         // Lien avec mot de passe : roomId_mode_pwd_salt_iterations
         link = `${window.location.origin}${window.location.pathname}#${roomId}_${mode}_pwd_${passwordSaltB64}_${passwordIterations}`;
     } else {
-        const keyString = await exportKeyToBase64();
-        // Lien standard : roomId_mode_key
-        link = `${window.location.origin}${window.location.pathname}#${roomId}_${mode}_${keyString}`;
+        // Lien ECDH (sans clé dans l'URL) : roomId_mode_ecdh
+        link = `${window.location.origin}${window.location.pathname}#${roomId}_${mode}_ecdh`;
     }
     
     elements.shareLink.value = link;
@@ -1090,7 +1352,7 @@ async function generateShareLink() {
         qrcodeContainer.classList.remove('hidden');
     }
     
-    console.log('🔗 Lien de partage généré (mode:', mode, ')');
+    console.log('🔗 Lien de partage généré (mode:', mode, ', ECDH)');
 }
 
 // ===== GESTION DES FICHIERS =====
@@ -1197,7 +1459,7 @@ async function startSend() {
         return;
     }
     try {
-        // Choisir la stratégie de clé : mot de passe ou clé aléatoire
+        // Choisir la stratégie de clé : mot de passe ou ECDH (échange de clés)
         const passwordValue = elements.passwordInput.value.trim();
         usePassword = passwordValue.length > 0;
         passwordSaltB64 = usePassword ? generatePasswordSalt() : null;
@@ -1207,8 +1469,10 @@ async function startSend() {
             console.log('🔐 Mot de passe détecté, dérivation en cours...');
             cryptoKey = await deriveKeyFromPassword(passwordValue, passwordSaltB64, passwordIterations);
         } else {
-            console.log('🔑 Génération d\'une clé aléatoire...');
-            await generateCryptoKey();
+            // Mode ECDH : générer une paire de clés, la clé AES sera dérivée après échange
+            console.log('🔑 Génération paire ECDH (Diffie-Hellman)...');
+            await generateECDHKeyPair();
+            // cryptoKey sera null jusqu'à ce qu'un receiver rejoigne et qu'on dérive la clé partagée
         }
 
         // Pour le mode chat uniquement ou both, pas besoin de fileInfo de fichier réel
@@ -1445,6 +1709,16 @@ async function saveSessionToStorage() {
             }
         }
         
+        // Exporter la paire ECDH si elle existe
+        let ecdhExported = null;
+        if (ecdhKeyPair) {
+            try {
+                ecdhExported = await exportECDHKeyPair();
+            } catch (e) {
+                console.warn('⚠️ Impossible d\'exporter la paire ECDH:', e);
+            }
+        }
+        
         const session = {
             roomId: roomId,
             sessionMode: sessionMode,
@@ -1461,10 +1735,12 @@ async function saveSessionToStorage() {
             fileInfo: fileInfo || null,
             // Stocker la clé crypto pour restauration
             cryptoKeyB64: cryptoKeyB64,
+            // Stocker la paire ECDH pour restauration
+            ecdhKeyPair: ecdhExported,
             timestamp: Date.now()
         };
         localStorage.setItem('securepeer_session', JSON.stringify(session));
-        console.log('💾 Session sauvegardée (avec clé crypto)');
+        console.log('💾 Session sauvegardée (avec clé crypto et ECDH)');
     } catch (err) {
         console.error('❌ Erreur sauvegarde session:', err);
     }
@@ -1508,7 +1784,7 @@ function handleHashConnection(hash) {
     // Extraire le mode de session depuis le lien
     // Format: roomId_mode_...reste
     const modeFromLink = parts[1];
-    let keyOrPasswordIndex = 2; // Index où commence la clé ou 'pwd'
+    let keyOrPasswordIndex = 2; // Index où commence la clé ou 'pwd' ou 'ecdh'
     
     if (['file', 'chat', 'both'].includes(modeFromLink)) {
         sessionMode = modeFromLink;
@@ -1545,8 +1821,38 @@ function handleHashConnection(hash) {
         }
 
         connectWebSocket();
+    }
+    // Cas ECDH (échange de clés Diffie-Hellman) : roomId_mode_ecdh
+    else if (parts[keyOrPasswordIndex] === 'ecdh') {
+        isReceiver = true;
+        usePassword = false;
+        
+        elements.receiverSection.classList.remove('hidden');
+        elements.receiverStatus.textContent = 'Échange de clés sécurisé en cours...';
+        
+        // Afficher le chat si le mode l'inclut
+        if (sessionMode === 'chat' || sessionMode === 'both') {
+            elements.receiverChatSection.classList.remove('hidden');
+        }
+        // Adapter l'interface selon le mode
+        if (sessionMode === 'chat') {
+            document.getElementById('incoming-file-info').classList.add('hidden');
+            elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
+        } else if (sessionMode === 'both') {
+            elements.receiverBothFileSection.classList.remove('hidden');
+            elements.receiverTitle.textContent = '💬 Chat + Fichiers';
+            document.getElementById('incoming-file-info').classList.add('hidden');
+        }
+
+        // Générer notre paire ECDH puis connecter
+        generateECDHKeyPair().then(() => {
+            connectWebSocket();
+        }).catch(err => {
+            console.error('❌ Erreur génération ECDH:', err);
+            showError('Erreur lors de la génération des clés sécurisées.');
+        });
     } else {
-        // Lien standard (clé incluse)
+        // Lien legacy avec clé incluse (pour rétrocompatibilité)
         const keyString = parts.slice(keyOrPasswordIndex).join('_');
         isReceiver = true;
 
@@ -2418,14 +2724,31 @@ async function restoreCreatorSession(restored) {
             await importKeyFromBase64(restored.cryptoKeyB64);
             console.log('🔐 [RESTORE-CREATOR] Clé crypto RESTAURÉE depuis localStorage');
         } catch (err) {
-            console.error('❌ [RESTORE-CREATOR] Erreur import clé, génération nouvelle:', err);
-            await generateCryptoKey();
-            console.log('🔐 [RESTORE-CREATOR] Nouvelle clé crypto générée (fallback)');
+            console.error('❌ [RESTORE-CREATOR] Erreur import clé:', err);
+            // Ne pas générer de nouvelle clé, on utilisera ECDH
         }
-    } else {
-        // Pas de clé stockée, en générer une nouvelle (ne devrait pas arriver)
-        await generateCryptoKey();
-        console.log('🔐 [RESTORE-CREATOR] Nouvelle clé crypto générée (pas de clé stockée)');
+    }
+    
+    // Restaurer la paire ECDH si elle existe
+    if (restored.ecdhKeyPair) {
+        try {
+            const success = await importECDHKeyPair(restored.ecdhKeyPair);
+            if (success) {
+                console.log('🔐 [RESTORE-CREATOR] Paire ECDH RESTAURÉE depuis localStorage');
+            } else {
+                // Générer une nouvelle paire ECDH
+                await generateECDHKeyPair();
+                console.log('🔐 [RESTORE-CREATOR] Nouvelle paire ECDH générée (import échoué)');
+            }
+        } catch (err) {
+            console.error('❌ [RESTORE-CREATOR] Erreur import ECDH:', err);
+            await generateECDHKeyPair();
+            console.log('🔐 [RESTORE-CREATOR] Nouvelle paire ECDH générée (erreur)');
+        }
+    } else if (!usePassword && !restored.cryptoKeyB64) {
+        // Pas de clé stockée et pas de mot de passe, générer ECDH
+        await generateECDHKeyPair();
+        console.log('🔐 [RESTORE-CREATOR] Nouvelle paire ECDH générée (pas de clé stockée)');
     }
     
     // Restaurer ou régénérer fileInfo selon le mode
@@ -2532,34 +2855,29 @@ async function restoreReceiverSession(restored, hash) {
             console.log('🔐 [RESTORE-RECEIVER] Clé crypto RESTAURÉE depuis localStorage');
         } catch (err) {
             console.error('❌ [RESTORE-RECEIVER] Erreur import clé stockée:', err);
-            // Fallback: essayer depuis le hash
-            if (hash && !usePassword) {
-                const parts = hash.split('_');
-                const modeFromLink = parts[1];
-                let keyIndex = ['file', 'chat', 'both'].includes(modeFromLink) ? 2 : 1;
-                const keyString = parts.slice(keyIndex).join('_');
-                await importKeyFromBase64(keyString);
-                console.log('🔐 [RESTORE-RECEIVER] Clé importée depuis hash (fallback)');
-            } else {
-                throw err;
-            }
+            // La clé sera dérivée via ECDH après connexion
         }
-    } else if (hash && !usePassword) {
-        // Pas de clé stockée - importer la clé depuis le hash
-        const parts = hash.split('_');
-        const modeFromLink = parts[1];
-        let keyIndex = ['file', 'chat', 'both'].includes(modeFromLink) ? 2 : 1;
-        const keyString = parts.slice(keyIndex).join('_');
+    }
+    
+    // Restaurer la paire ECDH si elle existe
+    if (restored.ecdhKeyPair) {
         try {
-            await importKeyFromBase64(keyString);
-            console.log('🔐 [RESTORE-RECEIVER] Clé importée depuis le lien');
+            const success = await importECDHKeyPair(restored.ecdhKeyPair);
+            if (success) {
+                console.log('🔐 [RESTORE-RECEIVER] Paire ECDH RESTAURÉE depuis localStorage');
+            } else {
+                // Générer une nouvelle paire ECDH
+                await generateECDHKeyPair();
+                console.log('🔐 [RESTORE-RECEIVER] Nouvelle paire ECDH générée');
+            }
         } catch (err) {
-            console.error('❌ [RESTORE-RECEIVER] Erreur import clé:', err);
-            showError('Erreur de restauration de session');
-            clearSessionStorage();
-            location.reload();
-            return;
+            console.error('❌ [RESTORE-RECEIVER] Erreur import ECDH:', err);
+            await generateECDHKeyPair();
         }
+    } else if (!usePassword && !restored.cryptoKeyB64) {
+        // Pas de clé et pas de mot de passe, générer ECDH pour le nouvel échange
+        await generateECDHKeyPair();
+        console.log('🔐 [RESTORE-RECEIVER] Nouvelle paire ECDH générée (pas de clé stockée)');
     }
     
     // Afficher le chat/fichiers selon le mode

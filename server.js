@@ -356,6 +356,28 @@ wss.on('connection', (ws, req) => {
                     break;
                 }
                 
+                case 'ecdh-public-key': {
+                    // Relayer la clé publique ECDH vers un participant spécifique
+                    if (!currentRoom) return;
+                    
+                    const room = rooms.get(currentRoom);
+                    if (!room) return;
+                    
+                    const targetId = data.targetOdId;
+                    const target = room.participants.get(targetId);
+                    
+                    if (target && target.ws.readyState === WebSocket.OPEN) {
+                        target.ws.send(JSON.stringify({
+                            type: 'ecdh-public-key',
+                            fromId: odId,
+                            fromPseudo: pseudo,
+                            publicKeyB64: data.publicKeyB64
+                        }));
+                        console.log(`🔐 [ECDH] Clé publique relayée de ${pseudo} vers ${targetId}`);
+                    }
+                    break;
+                }
+                
                 case 'rejoin-room': {
                     console.log('🔄 [REJOIN] Demande rejoin-room reçue:');
                     console.log('   📦 roomId:', data.roomId);
