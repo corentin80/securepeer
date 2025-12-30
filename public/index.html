@@ -30,20 +30,82 @@
     </header>
     
     <div class="container">
-        <section class="hero">
-            <div class="hero-content">
-                <h1>🔒 SecurePeer</h1>
-                <p class="subtitle">Transfert de fichiers chiffré de bout en bout, sans serveur intermédiaire</p>
-                <div class="hero-badges">
-                    <span>🔐 AES-256-GCM</span>
-                    <span>🌐 WebRTC P2P</span>
-                    <span>🚫 Pas de stockage</span>
+        <!-- LANDING PAGE / PAGE DE PRÉSENTATION -->
+        <section id="landing-page" class="section landing-page">
+            <div class="hero-landing">
+                <div class="hero-icon">🔒</div>
+                <h1>SecurePeer</h1>
+                <p class="hero-tagline">Transfert de fichiers & chat chiffré de bout en bout</p>
+                <p class="hero-description">Partagez des fichiers et communiquez en toute sécurité, directement entre appareils, sans aucun serveur intermédiaire.</p>
+            </div>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🔐</div>
+                    <h3>Chiffrement AES-256</h3>
+                    <p>Vos données sont chiffrées de bout en bout avec un algorithme de qualité militaire.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🌐</div>
+                    <h3>Connexion P2P</h3>
+                    <p>Transfert direct via WebRTC. Aucun fichier ne transite par nos serveurs.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">👥</div>
+                    <h3>Jusqu'à 20 personnes</h3>
+                    <p>Créez des rooms de groupe pour partager avec plusieurs personnes simultanément.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🚫</div>
+                    <h3>Aucun stockage</h3>
+                    <p>Nous ne stockons rien. Pas de compte, pas de logs, pas de traces.</p>
+                </div>
+            </div>
+            
+            <div class="cta-section">
+                <button id="start-session-btn" class="btn btn-primary btn-xlarge">🚀 Commencer</button>
+                <p class="cta-hint">Gratuit, sans inscription</p>
+            </div>
+            
+            <div class="how-it-works">
+                <h2>Comment ça marche ?</h2>
+                <div class="steps">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <h4>Créez une session</h4>
+                        <p>Choisissez le mode : fichiers, chat ou les deux</p>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <h4>Partagez le lien</h4>
+                        <p>Envoyez le lien sécurisé à vos destinataires</p>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <h4>Transférez</h4>
+                        <p>Échangez fichiers et messages en toute sécurité</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SÉLECTION DU PSEUDO (affiché avant création/jointure) -->
+        <section id="pseudo-section" class="section pseudo-section hidden">
+            <div>
+                <div class="pseudo-header">
+                    <h2>👤 Choisissez un pseudo</h2>
+                    <p class="section-desc">Ce pseudo sera visible par les autres participants</p>
+                </div>
+                <div class="pseudo-form">
+                    <input type="text" id="pseudo-input-main" placeholder="Votre pseudo" maxlength="20" class="pseudo-input" autofocus>
+                    <p class="hint">✨ 3 à 20 caractères</p>
+                    <button id="pseudo-confirm-btn" class="btn btn-primary btn-large">Continuer</button>
                 </div>
             </div>
         </section>
 
         <!-- SÉLECTION DU MODE -->
-        <section id="mode-selection" class="section mode-selection">
+        <section id="mode-selection" class="section mode-selection hidden">
             <div class="mode-header">
                 <h2>🚀 Créer une session</h2>
                 <p class="section-desc">Choisissez le type de session que vous souhaitez démarrer</p>
@@ -122,6 +184,16 @@
                     <span class="pulse"></span>
                     En attente du destinataire...
                 </p>
+                
+                <!-- Dropdown pour les pseudos connectés -->
+                <div class="connected-users-section hidden" id="connected-users-section">
+                    <label for="connected-users-dropdown">�</label>
+                    <select id="connected-users-dropdown" class="connected-users-dropdown">
+                        <option disabled selected>Connectés</option>
+                    </select>
+                </div>
+                
+                <button id="close-session" class="btn btn-primary" style="margin-top: 15px;">🚪 Fermer la session</button>
             </div>
 
             <!-- Zone de Chat (visible si mode chat ou both) -->
@@ -137,6 +209,7 @@
                     <input type="text" id="chat-input" placeholder="Tapez votre message..." autocomplete="off">
                     <button id="chat-send" class="btn btn-primary">Envoyer</button>
                 </div>
+                <button id="close-chat-session" class="btn btn-primary" style="margin-top: 15px; width: 100%;">🚪 Fermer la session</button>
             </div>
             
             <!-- Zone de fichiers pour mode both (côté expéditeur) -->
@@ -183,6 +256,13 @@
                 <div class="chat-header">
                     <h3>💬 Chat sécurisé</h3>
                     <span class="chat-status" id="receiver-chat-status">Connecté</span>
+                    <!-- Dropdown pour les pseudos connectés (receiver) - dans le header -->
+                    <div class="connected-users-section hidden" id="receiver-connected-users-section">
+                        <label for="receiver-connected-users-dropdown">👥</label>
+                        <select id="receiver-connected-users-dropdown" class="connected-users-dropdown">
+                            <option disabled selected>Connectés</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="chat-messages" id="receiver-chat-messages">
                     <!-- Messages dynamiques -->
@@ -191,6 +271,7 @@
                     <input type="text" id="receiver-chat-input" placeholder="Tapez votre message..." autocomplete="off">
                     <button id="receiver-chat-send" class="btn btn-primary">Envoyer</button>
                 </div>
+                <button id="close-receiver-session" class="btn btn-primary" style="margin-top: 15px; width: 100%;">🚪 Fermer la session</button>
             </div>
             
             <!-- Zone de fichiers pour mode both (côté destinataire) -->

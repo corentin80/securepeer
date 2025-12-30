@@ -15,7 +15,10 @@ const PASSWORD_SALT_BYTES = 16;
 
 // ===== ÉTAT GLOBAL =====
 let ws = null;
-let peer = null;
+let peers = new Map(); // Map<odId, SimplePeer> - un peer par participant
+let myOdId = null; // Mon identifiant unique dans la room
+let participants = new Map(); // Map<odId, {pseudo, isCreator}> - liste des participants
+let isCreator = false; // Suis-je le créateur de la room ?
 let selectedFile = null;
 let selectedFileNameOverride = null;
 let cryptoKey = null;
@@ -38,9 +41,20 @@ let connectedCount = 0;
 let receiverReady = false;
 let sessionMode = null; // 'file', 'chat', 'both'
 let chatMessages = [];
+let userPseudo = ''; // Pseudo de l'utilisateur actuel
+let remoteUserPseudo = ''; // Pseudo de l'autre utilisateur (legacy, pour 1:1)
 
 // ===== ÉLÉMENTS DOM =====
 const elements = {
+    // Landing page
+    landingPage: document.getElementById('landing-page'),
+    startSessionBtn: document.getElementById('start-session-btn'),
+    
+    // Pseudo
+    pseudoSection: document.getElementById('pseudo-section'),
+    pseudoInputMain: document.getElementById('pseudo-input-main'),
+    pseudoConfirmBtn: document.getElementById('pseudo-confirm-btn'),
+    
     // Mode Selection
     modeSelection: document.getElementById('mode-selection'),
     
@@ -59,6 +73,10 @@ const elements = {
     shareLink: document.getElementById('share-link'),
     copyLink: document.getElementById('copy-link'),
     linkStatus: document.getElementById('link-status'),
+    connectedUsersSection: document.getElementById('connected-users-section'),
+    connectedUsersDropdown: document.getElementById('connected-users-dropdown'),
+    receiverConnectedUsersSection: document.getElementById('receiver-connected-users-section'),
+    receiverConnectedUsersDropdown: document.getElementById('receiver-connected-users-dropdown'),
     
     // Chat (sender side)
     chatSection: document.getElementById('chat-section'),
@@ -112,7 +130,12 @@ const elements = {
     // Error
     errorSection: document.getElementById('error-section'),
     errorMessage: document.getElementById('error-message'),
-    retryTransfer: document.getElementById('retry-transfer')
+    retryTransfer: document.getElementById('retry-transfer'),
+    
+    // Close session buttons
+    closeSession: document.getElementById('close-session'),
+    closeChatSession: document.getElementById('close-chat-session'),
+    closeReceiverSession: document.getElementById('close-receiver-session')
 };
 
 // ===== UTILITAIRES =====
@@ -279,17 +302,45 @@ function connectWebSocket() {
     ws.onopen = () => {
         console.log('🌐 WebSocket connecté');
         
-        if (isReceiver) {
-            // Mode destinataire : rejoindre la room
+        // Récupérer le pseudo (déjà défini avant connectWebSocket)
+        // userPseudo est défini dans setupPseudoSection()
+        
+        // Vérifier si on a une session sauvegardée (reconnexion)
+        const savedSession = localStorage.getItem('securepeer_session');
+        const isReconnection = savedSession !== null;
+        
+        if (isReceiver && !isReconnection) {
+            // Mode destinataire pour la première fois : rejoindre la room
+            console.log('📥 Première connexion destinataire');
             ws.send(JSON.stringify({
                 type: 'join-room',
-                roomId: roomId
+                roomId: roomId,
+                pseudo: userPseudo
+            }));
+        } else if (isReceiver && isReconnection) {
+            // Destinataire qui se reconnecte
+            console.log('🔄 Reconnexion destinataire');
+            ws.send(JSON.stringify({
+                type: 'join-room',
+                roomId: roomId,
+                pseudo: userPseudo
+            }));
+        } else if (roomId && isReconnection) {
+            // Mode expéditeur qui se reconnecte
+            console.log('🔄 Reconnexion expéditeur');
+            ws.send(JSON.stringify({
+                type: 'rejoin-room',
+                roomId: roomId,
+                pseudo: userPseudo,
+                role: 'sender'
             }));
         } else {
-            // Mode expéditeur : créer une room
+            // Mode expéditeur : créer une nouvelle room
+            console.log('📤 Création nouvelle room');
             ws.send(JSON.stringify({
                 type: 'create-room',
-                fileInfo: fileInfo
+                fileInfo: fileInfo,
+                pseudo: userPseudo
             }));
         }
     };
@@ -313,17 +364,49 @@ function handleWebSocketMessage(data) {
     switch (data.type) {
         case 'room-created':
             roomId = data.roomId;
+            myOdId = data.odId;
+            isCreator = true;
+            saveSessionToStorage();
             generateShareLink();
+            break;
+            
+        case 'room-rejoined':
+            console.log('🔄 Reconnecté à la room en tant qu\'expéditeur');
+            roomId = data.roomId;
+            generateShareLink();
+            // Si un receiver est déjà là, le notifier
+            if (data.hasReceiver) {
+                connectedCount = 1;
+                elements.linkStatus.innerHTML = `<span class="pulse"></span> 👥 ${connectedCount} utilisateur(s) connecté(s)`;
+                elements.linkStatus.className = 'status status-connected';
+            }
             break;
             
         case 'room-joined':
             console.log('✅ Room rejointe');
             console.log('📦 FileInfo reçue:', data.fileInfo);
+            myOdId = data.odId;
             fileInfo = data.fileInfo;
             if (fileInfo) {
                 elements.incomingFileName.textContent = fileInfo.name;
                 elements.incomingFileSize.textContent = formatFileSize(fileInfo.size);
             }
+            
+            // Nettoyer et stocker les participants existants
+            participants.clear(); // Reset pour éviter doublons si reconnexion
+            if (data.participants && Array.isArray(data.participants)) {
+                data.participants.forEach(p => {
+                    // Ne pas s'ajouter soi-même
+                    if (p.odId !== myOdId) {
+                        participants.set(p.odId, { pseudo: p.pseudo, isCreator: p.isCreator || false });
+                    }
+                });
+                connectedCount = participants.size;
+                console.log(`👥 ${connectedCount} participant(s) déjà dans la room`);
+            }
+            // Toujours mettre à jour le dropdown (même si vide)
+            updateConnectedUsersDropdown();
+            
             // Vérifier si un mot de passe est requis
             if (fileInfo && fileInfo.passwordRequired) {
                 console.log('🔐 Mot de passe requis! Salt:', fileInfo.passwordSalt);
@@ -337,47 +420,98 @@ function handleWebSocketMessage(data) {
             } else {
                 console.log('✅ Pas de mot de passe requis');
                 elements.receiverStatus.textContent = 'Connexion P2P en cours...';
-                initPeer(false); // Receiver = non-initiateur
+                saveSessionToStorage();
+                // Initier les connexions P2P avec tous les participants existants
+                initPeersWithExistingParticipants();
             }
             break;
             
         case 'peer-joined':
-            console.log('👥 Le destinataire a rejoint');
-            connectedCount++;
-            elements.linkStatus.innerHTML = `<span class="pulse"></span> 👥 ${connectedCount} utilisateur(s) connecté(s)`;
-            elements.linkStatus.className = 'status status-connected';
-            // Si mot de passe requis, on attend receiver-ready avant d'initier le peer
-            if (!usePassword) {
-                console.log('🚀 Pas de mot de passe, démarrage P2P immédiat');
-                initPeer(true); // Sender = initiateur
+            // Éviter les doublons (même odId déjà connu)
+            if (participants.has(data.odId)) {
+                console.log(`⚠️ Participant déjà connu, ignoré: ${data.pseudo}`);
+                break;
             }
+            
+            console.log(`👥 Nouveau participant: ${data.pseudo} (${data.odId})`);
+            participants.set(data.odId, { pseudo: data.pseudo, isCreator: data.isCreator || false });
+            connectedCount = participants.size;
+            
+            // Mettre à jour le statut (selon si on est creator ou receiver)
+            if (!isReceiver && elements.linkStatus) {
+                elements.linkStatus.innerHTML = `<span class="pulse"></span> 👥 ${connectedCount} participant(s) connecté(s)`;
+                elements.linkStatus.className = 'status status-connected';
+            }
+            
+            // Mettre à jour le dropdown des utilisateurs connectés
+            updateConnectedUsersDropdown();
+            
+            // Créer une connexion P2P avec ce nouveau participant (je suis l'initiateur)
+            if (!usePassword) {
+                console.log(`🚀 Création connexion P2P avec ${data.pseudo}`);
+                initPeerWith(data.odId, true);
+            }
+            break;
+            
+        case 'peer-left':
+            console.log(`👋 Participant parti: ${data.pseudo} (${data.odId})`);
+            participants.delete(data.odId);
+            connectedCount = participants.size;
+            
+            // Détruire le peer correspondant
+            const leavingPeer = peers.get(data.odId);
+            if (leavingPeer) {
+                leavingPeer.destroy();
+                peers.delete(data.odId);
+            }
+            
+            // Mettre à jour le statut (selon si on est creator ou receiver)
+            if (!isReceiver && elements.linkStatus) {
+                if (connectedCount > 0) {
+                    elements.linkStatus.innerHTML = `<span class="pulse"></span> 👥 ${connectedCount} participant(s) connecté(s)`;
+                } else {
+                    elements.linkStatus.innerHTML = '<span class="pulse"></span> En attente de participants...';
+                    elements.linkStatus.className = 'status status-waiting';
+                }
+            }
+            
+            updateConnectedUsersDropdown();
             break;
             
         case 'receiver-ready':
-            console.log('🔓 Destinataire prêt (mot de passe validé)');
+            console.log(`🔓 Participant prêt: ${data.pseudo} (${data.odId})`);
             elements.linkStatus.innerHTML = '<span class="pulse"></span> Établissement P2P...';
-            initPeer(true); // Sender = initiateur
+            // Créer une connexion P2P avec ce participant (je suis l'initiateur)
+            if (!peers.has(data.odId)) {
+                initPeerWith(data.odId, true);
+            }
             break;
             
         case 'signal':
-            if (peer) {
-                peer.signal(data.signal);
+            // Signal WebRTC d'un participant spécifique
+            const fromId = data.fromId;
+            let existingPeer = peers.get(fromId);
+            
+            if (!existingPeer) {
+                // Créer le peer s'il n'existe pas (je suis le répondeur)
+                console.log(`📡 Signal reçu de ${data.fromPseudo || fromId}, création du peer...`);
+                initPeerWith(fromId, false);
+                existingPeer = peers.get(fromId);
+            }
+            
+            if (existingPeer) {
+                existingPeer.signal(data.signal);
             }
             break;
             
-        case 'peer-disconnected':
+        case 'session-closed':
+            // Le créateur a fermé la session -> Retourner à l'accueil
+            console.log('🔴 Session fermée:', data.message);
+            clearSessionStorage();
             showError(data.message);
-            connectedCount = Math.max(0, connectedCount - 1);
-            if (connectedCount > 0) {
-                elements.linkStatus.innerHTML = `<span class="pulse"></span> 👥 ${connectedCount} utilisateur(s) connecté(s)`;
-            } else {
-                elements.linkStatus.innerHTML = '<span class="pulse"></span> En attente du destinataire...';
-                elements.linkStatus.className = 'status status-waiting';
-            }
-            if (peer) {
-                peer.destroy();
-                peer = null;
-            }
+            setTimeout(() => {
+                location.reload();
+            }, 2000);
             break;
             
         case 'error':
@@ -388,8 +522,27 @@ function handleWebSocketMessage(data) {
 
 // ===== WEBRTC / SIMPLE-PEER =====
 
-function initPeer(initiator) {
-    peer = new SimplePeer({
+// Initialiser les connexions P2P avec tous les participants existants (quand on rejoint une room)
+function initPeersWithExistingParticipants() {
+    participants.forEach((info, odId) => {
+        if (!peers.has(odId)) {
+            console.log(`🚀 Connexion P2P avec ${info.pseudo} (${odId})`);
+            // Notifier que je suis prêt
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'receiver-ready' }));
+            }
+        }
+    });
+}
+
+// Créer une connexion P2P avec un participant spécifique
+function initPeerWith(targetOdId, initiator) {
+    if (peers.has(targetOdId)) {
+        console.log(`⚠️ Peer déjà existant pour ${targetOdId}`);
+        return;
+    }
+    
+    const newPeer = new SimplePeer({
         initiator: initiator,
         trickle: true,
         config: {
@@ -397,33 +550,36 @@ function initPeer(initiator) {
         }
     });
     
-    peer.on('signal', (signal) => {
-        // Envoyer le signal SDP/ICE via WebSocket
+    peers.set(targetOdId, newPeer);
+    
+    newPeer.on('signal', (signal) => {
+        // Envoyer le signal SDP/ICE via WebSocket vers ce participant spécifique
         ws.send(JSON.stringify({
             type: 'signal',
-            signal: signal
+            signal: signal,
+            targetId: targetOdId
         }));
     });
     
-    peer.on('connect', () => {
-        console.log('🤝 Connexion P2P établie !');
+    newPeer.on('connect', () => {
+        console.log(`🤝 Connexion P2P établie avec ${targetOdId} !`);
         
         // Mettre à jour le statut du chat
         updateChatStatus(true);
         
-        // Afficher le chat si le mode l'inclut (côté expéditeur)
-        if (!isReceiver && (sessionMode === 'chat' || sessionMode === 'both')) {
+        // Afficher le chat si le mode l'inclut (côté expéditeur/créateur)
+        if (isCreator && (sessionMode === 'chat' || sessionMode === 'both')) {
             elements.chatSection.classList.remove('hidden');
         }
         
-        // Afficher la zone fichiers si mode both (côté expéditeur)
-        if (!isReceiver && sessionMode === 'both') {
+        // Afficher la zone fichiers si mode both (côté expéditeur/créateur)
+        if (isCreator && sessionMode === 'both') {
             elements.bothFileSection.classList.remove('hidden');
         }
         
-        if (!isReceiver) {
-            // Côté expéditeur : démarrer le flux d'auth puis transfert (si mode fichier uniquement)
-            if (sessionMode === 'file') {
+        if (isCreator) {
+            // Côté créateur : démarrer le flux d'auth puis transfert (si mode fichier uniquement)
+            if (sessionMode === 'file' && peers.size === 1) {
                 startTransferFlow();
             }
             // En mode both, pas de transfert automatique - les fichiers sont envoyés via la zone latérale
@@ -440,22 +596,60 @@ function initPeer(initiator) {
         }
     });
     
-    peer.on('data', (data) => {
-        handlePeerData(data);
+    newPeer.on('data', (data) => {
+        handlePeerData(data, targetOdId);
     });
     
-    peer.on('close', () => {
-        console.log('🔌 Connexion P2P fermée');
+    newPeer.on('close', () => {
+        console.log(`🔌 Connexion P2P fermée avec ${targetOdId}`);
+        peers.delete(targetOdId);
     });
     
-    peer.on('error', (err) => {
-        // Ignorer les erreurs d'annulation volontaire (souvent lors de la fermeture propre)
+    newPeer.on('error', (err) => {
+        // Ignorer les erreurs d'annulation volontaire
         if (err.message && (err.message.includes('User-Initiated Abort') || err.message.includes('Close called'))) {
-            console.log('ℹ️ Connexion P2P fermée proprement');
+            console.log(`ℹ️ Connexion P2P fermée proprement avec ${targetOdId}`);
             return;
         }
-        console.error('❌ Erreur P2P:', err);
-        showError('Erreur de connexion P2P: ' + err.message);
+        
+        // Si le peer est déjà connecté, ne pas afficher d'erreur
+        if (newPeer && newPeer.connected) {
+            console.log(`ℹ️ Erreur P2P ignorée (peer ${targetOdId} déjà connecté):`, err.message);
+            return;
+        }
+        
+        console.error(`❌ Erreur P2P avec ${targetOdId}:`, err);
+    });
+}
+
+// Fonction legacy pour compatibilité (utilisée dans quelques endroits)
+function initPeer(initiator) {
+    // Si on a des participants, se connecter au premier
+    if (participants.size > 0) {
+        const firstOdId = participants.keys().next().value;
+        initPeerWith(firstOdId, initiator);
+    }
+}
+
+// Obtenir un peer connecté (pour envoyer des messages)
+function getConnectedPeer() {
+    for (const [odId, p] of peers) {
+        if (p.connected) return p;
+    }
+    return null;
+}
+
+// Envoyer des données à tous les peers connectés
+function broadcastToAllPeers(data) {
+    const dataStr = typeof data === 'string' ? data : JSON.stringify(data);
+    peers.forEach((p, odId) => {
+        if (p.connected) {
+            try {
+                p.send(dataStr);
+            } catch (err) {
+                console.error(`❌ Erreur envoi vers ${odId}:`, err);
+            }
+        }
     });
 }
 
@@ -470,6 +664,7 @@ function startTransferFlow() {
 }
 
 async function sendAuthChallenge() {
+    const peer = getConnectedPeer();
     if (!peer || !cryptoKey) return;
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const challenge = window.crypto.getRandomValues(new Uint8Array(16));
@@ -491,8 +686,9 @@ async function sendAuthChallenge() {
     peer.send(JSON.stringify(payload));
 }
 
-async function handleAuthChallenge(data) {
+async function handleAuthChallenge(data, fromOdId) {
     // Côté destinataire
+    const peer = fromOdId ? peers.get(fromOdId) : getConnectedPeer();
     console.log('🔑 handleAuthChallenge appelé, cryptoKey existe?', !!cryptoKey, 'peer existe?', !!peer);
     
     if (!cryptoKey) {
@@ -530,9 +726,10 @@ async function handleAuthChallenge(data) {
         elements.receiverStatus.textContent = 'Mot de passe validé. Connexion sécurisée.';
     } catch (err) {
         console.error('❌ ERREUR déchiffrement - mot de passe incorrect ou données corrompu', err);
-        peer.send(JSON.stringify({ type: 'auth-response', ok: false, reason: 'bad-password' }));
+        if (peer) peer.send(JSON.stringify({ type: 'auth-response', ok: false, reason: 'bad-password' }));
         showError('Mot de passe incorrect.');
-        if (peer) peer.destroy();
+        peers.forEach(p => p.destroy());
+        peers.clear();
     }
 }
 
@@ -548,7 +745,9 @@ function handleAuthResponse(data) {
     if (!data.ok) {
         console.error('❌ Mot de passe incorrect côté destinataire');
         showError('Mot de passe incorrect côté destinataire.');
-        if (peer) peer.destroy();
+        // Détruire tous les peers
+        peers.forEach(p => p.destroy());
+        peers.clear();
         return;
     }
 
@@ -559,12 +758,18 @@ function handleAuthResponse(data) {
     } else {
         console.error('❌ Challenge response invalide');
         showError('Vérification décryptée échouée.');
-        if (peer) peer.destroy();
+        peers.forEach(p => p.destroy());
+        peers.clear();
     }
 }
 
 async function startFileTransfer() {
     if (usePassword && !authVerified) return;
+    const peer = getConnectedPeer();
+    if (!peer) {
+        showError('Aucun peer connecté pour le transfert.');
+        return;
+    }
     console.log('📤 Démarrage du transfert...');
     
     elements.senderSection.classList.add('hidden');
@@ -631,13 +836,13 @@ async function startFileTransfer() {
     console.log('✅ Tous les chunks envoyés');
 }
 
-function handlePeerData(rawData) {
+function handlePeerData(rawData, fromOdId) {
     try {
         const data = JSON.parse(rawData.toString());
         
         switch (data.type) {
             case 'chat-message':
-                handleChatMessage(data);
+                handleChatMessage(data, fromOdId);
                 break;
             
             // Mode both - fichiers bidirectionnels
@@ -652,7 +857,7 @@ function handlePeerData(rawData) {
                 break;
                 
             case 'auth-challenge':
-                handleAuthChallenge(data);
+                handleAuthChallenge(data, fromOdId);
                 break;
 
             case 'auth-response':
@@ -744,10 +949,12 @@ async function finalizeTransfer(expectedHash) {
     receivedChunks = [];
     totalReceived = 0;
     
-    if (peer) {
-        peer.destroy();
-        peer = null;
-    }
+    // Détruire tous les peers
+    peers.forEach(p => p.destroy());
+    peers.clear();
+    
+    // Effacer la session sauvegardée (transfert terminé)
+    clearSessionStorage();
     
     console.log('✅ Transfert terminé !');
 }
@@ -1019,12 +1226,53 @@ async function applyReceiverPassword() {
         cryptoKey = await deriveKeyFromPassword(pwd, passwordSaltB64, passwordIterations);
         console.log('✅ Clé dérivée avec succès');
         elements.receiverPasswordBlock.classList.add('hidden');
-        elements.receiverStatus.textContent = 'Mot de passe validé. Cliquez sur le bouton pour recevoir le fichier.';
         
-        // Afficher le bouton "Recevoir le fichier"
-        if (elements.receiveFileBtn) {
-            elements.receiveFileBtn.classList.remove('hidden');
+        // Pour le mode chat ou both, démarrer directement P2P
+        if (sessionMode === 'chat' || sessionMode === 'both') {
+            console.log('🚀 Mode chat/both : démarrage P2P automatique...');
+            
+            // Masquer toute la section receiver (y compris boutons, infos fichier, etc.)
+            const receiverInfo = document.querySelector('.receiver-info');
+            if (receiverInfo) {
+                receiverInfo.style.display = 'none';
+            }
+            
+            // Afficher le chat
+            if (sessionMode === 'chat') {
+                elements.receiverChatSection.classList.remove('hidden');
+            } else if (sessionMode === 'both') {
+                elements.receiverChatSection.classList.remove('hidden');
+                elements.receiverBothFileSection.classList.remove('hidden');
+            }
+            
+            // Sauvegarder la session
+            saveSessionToStorage();
+            
+            // Notifier l'expéditeur que le destinataire est prêt
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'receiver-ready' }));
+            }
+            
+            // Démarrer le peer (non-initiateur)
+            if (!peer) {
+                initPeer(false);
+            }
+            
+            // Traiter le challenge en attente si applicable
+            if (pendingChallenge) {
+                console.log('📬 Traitement du challenge en attente...');
+                const challenge = pendingChallenge;
+                pendingChallenge = null;
+                await handleAuthChallenge(challenge);
+            }
+        } else {
+            // Mode fichier : afficher le bouton "Recevoir le fichier"
+            elements.receiverStatus.textContent = 'Mot de passe validé. Cliquez sur le bouton pour recevoir le fichier.';
+            if (elements.receiveFileBtn) {
+                elements.receiveFileBtn.classList.remove('hidden');
+            }
         }
+        
         receiverReady = true;
     } catch (err) {
         console.error('❌ Erreur dérivation mot de passe:', err);
@@ -1064,6 +1312,179 @@ async function startReceiving() {
     }
 }
 
+// ===== GESTION DES PSEUDOS =====
+
+function updateConnectedUsersDropdown() {
+    // Sélectionner le bon dropdown selon si on est receiver ou creator
+    const dropdownEl = isReceiver ? elements.receiverConnectedUsersDropdown : elements.connectedUsersDropdown;
+    const sectionEl = isReceiver ? elements.receiverConnectedUsersSection : elements.connectedUsersSection;
+    
+    console.log(`🔄 updateConnectedUsersDropdown: isReceiver=${isReceiver}, participants.size=${participants.size}`);
+    
+    if (!dropdownEl) {
+        console.log('⚠️ Dropdown non trouvé');
+        return;
+    }
+    
+    // Effacer les options existantes
+    dropdownEl.innerHTML = '';
+    
+    // Ajouter l'utilisateur actuel
+    const optionMe = document.createElement('option');
+    optionMe.textContent = `${userPseudo} (vous)` + (isCreator ? ' 👑' : '');
+    optionMe.disabled = true;
+    dropdownEl.appendChild(optionMe);
+    
+    // Ajouter tous les participants (en évitant les doublons par pseudo)
+    const addedPseudos = new Set([userPseudo]);
+    participants.forEach((info, odId) => {
+        // Éviter les doublons (même pseudo)
+        if (!addedPseudos.has(info.pseudo)) {
+            addedPseudos.add(info.pseudo);
+            const optionOther = document.createElement('option');
+            optionOther.textContent = info.pseudo + (info.isCreator ? ' 👑' : '');
+            optionOther.disabled = true;
+            dropdownEl.appendChild(optionOther);
+        }
+    });
+    
+    // Toujours montrer la section dès qu'il y a au moins 1 autre participant
+    if (sectionEl) {
+        if (participants.size > 0) {
+            sectionEl.classList.remove('hidden');
+            console.log('✅ Section dropdown visible');
+        } else {
+            sectionEl.classList.add('hidden');
+        }
+    }
+}
+
+// ===== SAUVEGARDE ET RESTAURATION DE SESSION =====
+
+function saveSessionToStorage() {
+    try {
+        const session = {
+            roomId: roomId,
+            sessionMode: sessionMode,
+            isReceiver: isReceiver,
+            usePassword: usePassword,
+            passwordSaltB64: passwordSaltB64,
+            passwordIterations: passwordIterations,
+            hash: window.location.hash.substring(1),
+            timestamp: Date.now()
+        };
+        localStorage.setItem('securepeer_session', JSON.stringify(session));
+        console.log('💾 Session sauvegardée');
+    } catch (err) {
+        console.error('❌ Erreur sauvegarde session:', err);
+    }
+}
+
+function restoreSessionFromStorage() {
+    try {
+        const sessionData = localStorage.getItem('securepeer_session');
+        if (!sessionData) return null;
+        
+        const session = JSON.parse(sessionData);
+        
+        // Vérifier que la session n'est pas trop vieille (24h max)
+        const age = Date.now() - session.timestamp;
+        if (age > 24 * 60 * 60 * 1000) {
+            console.log('⏰ Session expirée');
+            clearSessionStorage();
+            return null;
+        }
+        
+        console.log('📂 Session restaurée:', session);
+        return session;
+    } catch (err) {
+        console.error('❌ Erreur restauration session:', err);
+        return null;
+    }
+}
+
+function clearSessionStorage() {
+    localStorage.removeItem('securepeer_session');
+    console.log('🗑️ Session effacée');
+}
+
+function handleHashConnection(hash) {
+    // Mode destinataire - cacher la sélection de mode
+    elements.modeSelection.classList.add('hidden');
+    
+    const parts = hash.split('_');
+    roomId = parts[0];
+    
+    // Extraire le mode de session depuis le lien
+    // Format: roomId_mode_...reste
+    const modeFromLink = parts[1];
+    let keyOrPasswordIndex = 2; // Index où commence la clé ou 'pwd'
+    
+    if (['file', 'chat', 'both'].includes(modeFromLink)) {
+        sessionMode = modeFromLink;
+    } else {
+        sessionMode = 'file'; // Par défaut pour les anciens liens
+        keyOrPasswordIndex = 1; // Pas de mode explicite, la clé/pwd commence à l'index 1
+    }
+
+    // Cas lien protégé par mot de passe : roomId_mode_pwd_salt_iterations
+    if (parts[keyOrPasswordIndex] === 'pwd') {
+        isReceiver = true;
+        usePassword = true;
+        passwordRequired = true;
+        passwordSaltB64 = parts[keyOrPasswordIndex + 1];
+        passwordIterations = parts[keyOrPasswordIndex + 2] ? parseInt(parts[keyOrPasswordIndex + 2], 10) : KDF_ITERATIONS;
+
+        elements.receiverSection.classList.remove('hidden');
+        elements.receiverPasswordBlock.classList.remove('hidden');
+        elements.receiverStatus.textContent = 'Mot de passe requis pour déchiffrer.';
+        
+        // Afficher le chat si le mode l'inclut
+        if (sessionMode === 'chat' || sessionMode === 'both') {
+            elements.receiverChatSection.classList.remove('hidden');
+        }
+        // Adapter l'interface selon le mode
+        if (sessionMode === 'chat') {
+            document.getElementById('incoming-file-info').classList.add('hidden');
+            elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
+            elements.receiverStatus.textContent = 'Connexion au chat...';
+        } else if (sessionMode === 'both') {
+            elements.receiverBothFileSection.classList.remove('hidden');
+            elements.receiverTitle.textContent = '💬 Chat + Fichiers';
+            document.getElementById('incoming-file-info').classList.add('hidden');
+        }
+
+        connectWebSocket();
+    } else {
+        // Lien standard (clé incluse)
+        const keyString = parts.slice(keyOrPasswordIndex).join('_');
+        isReceiver = true;
+
+        elements.receiverSection.classList.remove('hidden');
+        
+        // Afficher le chat si le mode l'inclut
+        if (sessionMode === 'chat' || sessionMode === 'both') {
+            elements.receiverChatSection.classList.remove('hidden');
+        }
+        // Adapter l'interface selon le mode
+        if (sessionMode === 'chat') {
+            document.getElementById('incoming-file-info').classList.add('hidden');
+            elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
+            elements.receiverStatus.textContent = 'Connexion au chat...';
+        } else if (sessionMode === 'both') {
+            elements.receiverBothFileSection.classList.remove('hidden');
+            elements.receiverTitle.textContent = '💬 Chat + Fichiers';
+            document.getElementById('incoming-file-info').classList.add('hidden');
+        }
+
+        importKeyFromBase64(keyString).then(() => {
+            connectWebSocket();
+        }).catch(err => {
+            showError('Lien invalide : impossible de décoder la clé de chiffrement.');
+        });
+    }
+}
+
 // ===== INITIALISATION =====
 
 function init() {
@@ -1072,92 +1493,157 @@ function init() {
         showError('La Web Crypto API n\'est pas disponible dans ce navigateur. Utilisez Chrome, Firefox, Edge ou Safari récent.');
         return;
     }
-
-    // Vérifier si on est en mode destinataire (URL avec hash)
+    
+    // Vérifier si on est en mode destinataire (URL avec hash = lien de partage)
     const hash = window.location.hash.substring(1);
-
+    
     if (hash && hash.includes('_')) {
-        // Mode destinataire - cacher la sélection de mode
+        // Lien de partage détecté - cacher la landing, demander pseudo puis connecter
+        elements.landingPage.classList.add('hidden');
+        showPseudoThenConnect(hash);
+    } else {
+        // Afficher la landing page par défaut
+        elements.landingPage.classList.remove('hidden');
+        elements.pseudoSection.classList.add('hidden');
         elements.modeSelection.classList.add('hidden');
         
-        const parts = hash.split('_');
-        roomId = parts[0];
-        
-        // Extraire le mode de session depuis le lien
-        // Format: roomId_mode_...reste
-        const modeFromLink = parts[1];
-        if (['file', 'chat', 'both'].includes(modeFromLink)) {
-            sessionMode = modeFromLink;
-            parts.splice(1, 1); // Retirer le mode pour le reste du parsing
-        } else {
-            sessionMode = 'file'; // Par défaut pour les anciens liens
-        }
-
-        // Cas lien protégé par mot de passe : roomId_mode_pwd_salt_iterations
-        if (parts[1] === 'pwd') {
-            isReceiver = true;
-            usePassword = true;
-            passwordRequired = true;
-            passwordSaltB64 = parts[2];
-            passwordIterations = parts[3] ? parseInt(parts[3], 10) : KDF_ITERATIONS;
-
-            elements.receiverSection.classList.remove('hidden');
-            elements.receiverPasswordBlock.classList.remove('hidden');
-            elements.receiverStatus.textContent = 'Mot de passe requis pour déchiffrer.';
-            
-            // Afficher le chat si le mode l'inclut
-            if (sessionMode === 'chat' || sessionMode === 'both') {
-                elements.receiverChatSection.classList.remove('hidden');
-            }
-            // Adapter l'interface selon le mode
-            if (sessionMode === 'chat') {
-                document.getElementById('incoming-file-info').classList.add('hidden');
-                elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
-                elements.receiverStatus.textContent = 'Connexion au chat...';
-            } else if (sessionMode === 'both') {
-                elements.receiverBothFileSection.classList.remove('hidden');
-                elements.receiverTitle.textContent = '💬 Chat + Fichiers';
-                document.getElementById('incoming-file-info').classList.add('hidden');
-            }
-
-            connectWebSocket();
-        } else {
-            // Lien standard (clé incluse)
-            const keyString = parts.slice(1).join('_');
-            isReceiver = true;
-
-            elements.receiverSection.classList.remove('hidden');
-            
-            // Afficher le chat si le mode l'inclut
-            if (sessionMode === 'chat' || sessionMode === 'both') {
-                elements.receiverChatSection.classList.remove('hidden');
-            }
-            // Adapter l'interface selon le mode
-            if (sessionMode === 'chat') {
-                document.getElementById('incoming-file-info').classList.add('hidden');
-                elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
-                elements.receiverStatus.textContent = 'Connexion au chat...';
-            } else if (sessionMode === 'both') {
-                elements.receiverBothFileSection.classList.remove('hidden');
-                elements.receiverTitle.textContent = '💬 Chat + Fichiers';
-                document.getElementById('incoming-file-info').classList.add('hidden');
-            }
-
-            importKeyFromBase64(keyString).then(() => {
-                connectWebSocket();
-            }).catch(err => {
-                showError('Lien invalide : impossible de décoder la clé de chiffrement.');
-            });
-        }
-    } else {
-        // Mode expéditeur - afficher la sélection de mode
-        isReceiver = false;
-        elements.modeSelection.classList.remove('hidden');
-        elements.senderSection.classList.add('hidden');
-        
-        // Setup des cartes de sélection de mode
-        setupModeSelection();
+        // Setup du bouton "Commencer"
+        setupLandingPage();
     }
+}
+
+// Setup de la landing page
+function setupLandingPage() {
+    console.log('🚀 setupLandingPage called, startSessionBtn:', elements.startSessionBtn);
+    if (elements.startSessionBtn) {
+        elements.startSessionBtn.addEventListener('click', () => {
+            console.log('✅ Bouton Commencer cliqué!');
+            // Cacher la landing, montrer la sélection de mode directement
+            elements.landingPage.classList.add('hidden');
+            elements.modeSelection.classList.remove('hidden');
+            
+            // Setup des cartes de sélection de mode
+            setupModeSelection();
+        });
+    } else {
+        console.error('❌ startSessionBtn non trouvé!');
+    }
+}
+
+// Demander le pseudo puis connecter (pour receivers)
+function showPseudoThenConnect(hash) {
+    // Toujours demander le pseudo, ignorer le pseudo sauvegardé
+    elements.pseudoSection.classList.remove('hidden');
+    elements.pseudoInputMain.value = '';
+    elements.pseudoInputMain?.focus();
+    elements.pseudoConfirmBtn.onclick = () => {
+        const pseudoValue = elements.pseudoInputMain.value.trim();
+        if (!pseudoValue || pseudoValue.length < 3) {
+            showToast('⚠️ Le pseudo doit faire au moins 3 caractères');
+            return;
+        }
+        if (pseudoValue.length > 20) {
+            showToast('⚠️ Le pseudo doit faire maximum 20 caractères');
+            return;
+        }
+        // Sauvegarder le pseudo uniquement pour la session
+        userPseudo = pseudoValue;
+        localStorage.setItem('securepeer_pseudo', pseudoValue);
+        console.log('✅ Pseudo défini:', userPseudo);
+        // Cacher la section pseudo et connecter
+        elements.pseudoSection.classList.add('hidden');
+        handleHashConnection(hash);
+        setupChat();
+        setupBothModeFiles();
+    };
+}
+
+// Demander le pseudo puis afficher l'interface créateur
+function showPseudoForCreator(mode) {
+    // Toujours demander le pseudo (pré-remplir si sauvegardé)
+    const savedPseudo = localStorage.getItem('securepeer_pseudo');
+    
+    // Afficher la section pseudo
+    elements.pseudoSection.classList.remove('hidden');
+    
+    // Pré-remplir si un pseudo est sauvegardé
+    if (savedPseudo) {
+        elements.pseudoInputMain.value = savedPseudo;
+    } else {
+        elements.pseudoInputMain.value = '';
+    }
+    elements.pseudoInputMain?.focus();
+    
+    // Modifier le comportement du bouton confirmer
+    elements.pseudoConfirmBtn.onclick = () => {
+        const pseudoValue = elements.pseudoInputMain.value.trim();
+        
+        if (!pseudoValue || pseudoValue.length < 3) {
+            showToast('⚠️ Le pseudo doit faire au moins 3 caractères');
+            return;
+        }
+        
+        if (pseudoValue.length > 20) {
+            showToast('⚠️ Le pseudo doit faire maximum 20 caractères');
+            return;
+        }
+        
+        // Sauvegarder le pseudo
+        userPseudo = pseudoValue;
+        localStorage.setItem('securepeer_pseudo', pseudoValue);
+        
+        console.log('✅ Pseudo défini:', userPseudo);
+        
+        // Cacher la section pseudo et afficher l'interface
+        elements.pseudoSection.classList.add('hidden');
+        showCreatorInterface(mode);
+    };
+}
+
+// Afficher l'interface créateur selon le mode
+function showCreatorInterface(mode) {
+    // Setup du chat et des fichiers
+    setupChat();
+    setupBothModeFiles();
+    setupEventListeners();
+    
+    // Afficher la section appropriée
+    if (mode === 'chat') {
+        // Mode chat uniquement
+        elements.senderSection.classList.remove('hidden');
+        elements.dropZone.classList.add('hidden');
+        elements.passwordBlock.classList.remove('hidden');
+        elements.sendFileBtn.textContent = '💬 Démarrer le chat';
+        document.querySelector('.sender-header h2').textContent = '💬 Chat sécurisé';
+        document.querySelector('.section-desc').textContent = 'Démarrez une conversation chiffrée de bout en bout';
+    } else if (mode === 'file') {
+        // Mode fichier uniquement
+        elements.senderSection.classList.remove('hidden');
+        elements.dropZone.classList.remove('hidden');
+    } else {
+        // Mode both : fichier + chat
+        elements.senderSection.classList.remove('hidden');
+        elements.dropZone.classList.add('hidden');
+        elements.passwordBlock.classList.remove('hidden');
+        elements.sendFileBtn.textContent = '🚀 Démarrer la session';
+        document.querySelector('.sender-header h2').textContent = '💬 Chat + Fichiers';
+        document.querySelector('.section-desc').textContent = 'Discutez et échangez des fichiers en temps réel';
+    }
+    
+    console.log('📋 Interface créateur affichée pour mode:', mode);
+}
+
+function continueInit() {
+    // Cacher la section pseudo
+    elements.pseudoSection.classList.add('hidden');
+    
+    // Mode expéditeur - afficher la sélection de mode
+    isReceiver = false;
+    elements.modeSelection.classList.remove('hidden');
+    elements.senderSection.classList.add('hidden');
+    
+    // Setup des cartes de sélection de mode
+    setupModeSelection();
     
     // Setup du chat
     setupChat();
@@ -1165,6 +1651,11 @@ function init() {
     // Setup du mode both (fichiers bidirectionnels)
     setupBothModeFiles();
     
+    // Setup des event listeners
+    setupEventListeners();
+}
+
+function setupEventListeners() {
     // Event listeners - Drag & Drop
     elements.dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -1241,12 +1732,50 @@ function init() {
     });
     
     elements.newTransfer.addEventListener('click', () => {
+        clearSessionStorage();
         location.reload();
     });
     
     elements.retryTransfer.addEventListener('click', () => {
         window.location.reload();
     });
+    
+    // Boutons pour fermer la session
+    if (elements.closeSession) {
+        elements.closeSession.addEventListener('click', () => {
+            if (confirm('Voulez-vous vraiment fermer cette session ?')) {
+                clearSessionStorage();
+                if (ws) ws.close();
+                peers.forEach(p => p.destroy());
+                peers.clear();
+                location.reload();
+            }
+        });
+    }
+    
+    if (elements.closeChatSession) {
+        elements.closeChatSession.addEventListener('click', () => {
+            if (confirm('Voulez-vous vraiment fermer cette session ?')) {
+                clearSessionStorage();
+                if (ws) ws.close();
+                peers.forEach(p => p.destroy());
+                peers.clear();
+                location.reload();
+            }
+        });
+    }
+    
+    if (elements.closeReceiverSession) {
+        elements.closeReceiverSession.addEventListener('click', () => {
+            if (confirm('Voulez-vous vraiment fermer cette session ?')) {
+                clearSessionStorage();
+                if (ws) ws.close();
+                peers.forEach(p => p.destroy());
+                peers.clear();
+                location.reload();
+            }
+        });
+    }
     
     // Clic sur la zone de drop
     elements.dropZone.addEventListener('click', () => {
@@ -1723,10 +2252,24 @@ function updateLanguage() {
 
 // Appliquer la langue au chargement
 document.addEventListener('DOMContentLoaded', () => {
+    setupPseudoSection();
     init();
     setupLanguageSelector();
     updateLanguage();
     setupThemeToggle();
+    
+    // Raccourci Escape pour fermer la session
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && (roomId || isReceiver)) {
+            if (confirm('Voulez-vous vraiment fermer cette session ? (Appuyez sur Escape)')) {
+                clearSessionStorage();
+                if (ws) ws.close();
+                peers.forEach(p => p.destroy());
+                peers.clear();
+                location.reload();
+            }
+        }
+    });
 });
 
 function setupThemeToggle() {
@@ -1751,6 +2294,45 @@ function setupThemeToggle() {
     }
 }
 
+// ===== SÉLECTION DU PSEUDO =====
+function setupPseudoSection() {
+    // Event listener pour le bouton confirmer pseudo
+    if (elements.pseudoConfirmBtn) {
+        elements.pseudoConfirmBtn.addEventListener('click', () => {
+            const pseudoValue = elements.pseudoInputMain.value.trim();
+            
+            if (!pseudoValue || pseudoValue.length < 3) {
+                showToast('⚠️ Le pseudo doit faire au moins 3 caractères');
+                return;
+            }
+            
+            if (pseudoValue.length > 20) {
+                showToast('⚠️ Le pseudo doit faire maximum 20 caractères');
+                return;
+            }
+            
+            // Sauvegarder le pseudo
+            userPseudo = pseudoValue;
+            localStorage.setItem('securepeer_pseudo', pseudoValue);
+            
+            console.log('✅ Pseudo défini:', userPseudo);
+            
+            // Cacher la section pseudo et continuer
+            elements.pseudoSection.classList.add('hidden');
+            continueInit();
+        });
+    }
+    
+    // Permettre Entrée pour confirmer
+    if (elements.pseudoInputMain) {
+        elements.pseudoInputMain.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                elements.pseudoConfirmBtn.click();
+            }
+        });
+    }
+}
+
 // ===== SÉLECTION DU MODE =====
 function setupModeSelection() {
     const modeCards = document.querySelectorAll('.mode-card');
@@ -1760,36 +2342,20 @@ function setupModeSelection() {
             const mode = card.dataset.mode;
             sessionMode = mode;
             
+            // Sauvegarder la session avec le mode
+            if (roomId) {
+                saveSessionToStorage();
+            }
+            
             // Marquer la carte sélectionnée
             modeCards.forEach(c => c.classList.remove('selected'));
             card.classList.add('selected');
             
-            // Cacher la sélection de mode
+            // Cacher la sélection de mode, demander le pseudo
             elements.modeSelection.classList.add('hidden');
             
-            // Afficher la section appropriée
-            if (mode === 'chat') {
-                // Mode chat uniquement : afficher directement le chat
-                elements.senderSection.classList.remove('hidden');
-                elements.dropZone.classList.add('hidden');
-                elements.passwordBlock.classList.remove('hidden');
-                elements.sendFileBtn.textContent = '💬 Démarrer le chat';
-                // Masquer la zone fichier
-                document.querySelector('.sender-header h2').textContent = '💬 Chat sécurisé';
-                document.querySelector('.section-desc').textContent = 'Démarrez une conversation chiffrée de bout en bout';
-            } else if (mode === 'file') {
-                // Mode fichier uniquement
-                elements.senderSection.classList.remove('hidden');
-                elements.dropZone.classList.remove('hidden');
-            } else {
-                // Mode both : fichier + chat - afficher chat + zone fichiers latérale
-                elements.senderSection.classList.remove('hidden');
-                elements.dropZone.classList.add('hidden');
-                elements.passwordBlock.classList.remove('hidden');
-                elements.sendFileBtn.textContent = '🚀 Démarrer la session';
-                document.querySelector('.sender-header h2').textContent = '💬 Chat + Fichiers';
-                document.querySelector('.section-desc').textContent = 'Discutez et échangez des fichiers en temps réel';
-            }
+            // Demander le pseudo avant de continuer
+            showPseudoForCreator(mode);
             
             console.log('📋 Mode sélectionné:', mode);
         });
@@ -1824,7 +2390,9 @@ async function sendChatMessage(isReceiverSide) {
     const messagesEl = isReceiverSide ? elements.receiverChatMessages : elements.chatMessages;
     
     const text = inputEl.value.trim();
-    if (!text || !peer || !peer.connected) return;
+    // Vérifier qu'on a au moins un peer connecté
+    const hasConnectedPeer = Array.from(peers.values()).some(p => p.connected);
+    if (!text || !hasConnectedPeer) return;
     
     try {
         // Chiffrer le message
@@ -1838,28 +2406,29 @@ async function sendChatMessage(isReceiverSide) {
             plaintext
         );
         
-        // Envoyer via le canal P2P
+        // Envoyer via le canal P2P à tous les peers
         const messageData = {
             type: 'chat-message',
             iv: toBase64(iv),
             ciphertext: toBase64(new Uint8Array(ciphertext)),
+            senderPseudo: userPseudo,
             timestamp: Date.now()
         };
         
-        peer.send(JSON.stringify(messageData));
+        broadcastToAllPeers(messageData);
         
         // Afficher localement
-        addChatMessage(text, true, messagesEl);
+        addChatMessage(text, true, messagesEl, userPseudo);
         inputEl.value = '';
         
-        console.log('💬 Message envoyé');
+        console.log('💬 Message envoyé à', peers.size, 'peer(s)');
     } catch (err) {
         console.error('❌ Erreur envoi message:', err);
         showToast('Erreur lors de l\'envoi du message');
     }
 }
 
-async function handleChatMessage(data) {
+async function handleChatMessage(data, fromOdId) {
     try {
         const iv = fromBase64(data.iv);
         const ciphertext = fromBase64(data.ciphertext);
@@ -1873,21 +2442,33 @@ async function handleChatMessage(data) {
         const decoder = new TextDecoder();
         const text = decoder.decode(decrypted);
         
+        // Récupérer le pseudo de l'expéditeur
+        const senderPseudo = data.senderPseudo || participants.get(fromOdId)?.pseudo || 'Anonyme';
+        
         // Afficher le message reçu
         const messagesEl = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
-        addChatMessage(text, false, messagesEl);
+        addChatMessage(text, false, messagesEl, senderPseudo);
         
-        console.log('💬 Message reçu');
+        console.log('💬 Message reçu de', senderPseudo);
     } catch (err) {
         console.error('❌ Erreur déchiffrement message:', err);
     }
 }
 
-function addChatMessage(text, isSent, containerEl) {
+function addChatMessage(text, isSent, containerEl, pseudo = '') {
     const msgDiv = document.createElement('div');
     msgDiv.className = `chat-message ${isSent ? 'sent' : 'received'}`;
     
+    // Ajouter le pseudo pour les messages reçus (surtout utile en groupe)
+    if (!isSent && pseudo) {
+        const pseudoSpan = document.createElement('span');
+        pseudoSpan.className = 'message-pseudo';
+        pseudoSpan.textContent = pseudo;
+        msgDiv.appendChild(pseudoSpan);
+    }
+    
     const textSpan = document.createElement('span');
+    textSpan.className = 'message-text';
     textSpan.textContent = text;
     msgDiv.appendChild(textSpan);
     
@@ -1900,14 +2481,15 @@ function addChatMessage(text, isSent, containerEl) {
     containerEl.scrollTop = containerEl.scrollHeight;
     
     // Stocker le message
-    chatMessages.push({ text, isSent, timestamp: Date.now() });
+    chatMessages.push({ text, isSent, pseudo, timestamp: Date.now() });
 }
 
 function updateChatStatus(connected) {
     const statusEls = [elements.chatStatus, elements.receiverChatStatus];
+    const connectedPeers = Array.from(peers.values()).filter(p => p.connected).length;
     statusEls.forEach(el => {
         if (el) {
-            el.textContent = connected ? 'Connecté' : 'En attente...';
+            el.textContent = connected ? `Connecté (${connectedPeers + 1} participants)` : 'En attente...';
             el.classList.toggle('connected', connected);
         }
     });
@@ -1969,7 +2551,8 @@ function handleBothFileSelect(files, isReceiverSide) {
 
 async function sendBothFiles(isReceiverSide) {
     const filesToSend = pendingBothFiles.filter(f => f.isReceiverSide === isReceiverSide);
-    if (filesToSend.length === 0 || !peer || !peer.connected) return;
+    const hasConnectedPeer = Array.from(peers.values()).some(p => p.connected);
+    if (filesToSend.length === 0 || !hasConnectedPeer) return;
     
     const sendBtn = isReceiverSide ? elements.receiverBothFileSend : elements.bothFileSend;
     sendBtn.disabled = true;
@@ -2012,14 +2595,15 @@ async function sendBothFile(file, isReceiverSide) {
         data
     );
     
-    // Envoyer les métadonnées
-    peer.send(JSON.stringify({
+    // Envoyer les métadonnées à tous les peers
+    broadcastToAllPeers({
         type: 'both-file-meta',
         name: file.name,
         size: file.size,
         mimeType: file.type || 'application/octet-stream',
-        iv: toBase64(iv)
-    }));
+        iv: toBase64(iv),
+        senderPseudo: userPseudo
+    });
     
     // Envoyer les données chiffrées en chunks
     const encryptedData = new Uint8Array(encrypted);
@@ -2029,11 +2613,11 @@ async function sendBothFile(file, isReceiverSide) {
     
     while (offset < encryptedData.length) {
         const chunk = encryptedData.slice(offset, offset + chunkSize);
-        peer.send(JSON.stringify({
+        broadcastToAllPeers({
             type: 'both-file-chunk',
             index: index,
             data: Array.from(chunk)
-        }));
+        });
         offset += chunkSize;
         index++;
         
@@ -2042,12 +2626,12 @@ async function sendBothFile(file, isReceiverSide) {
     }
     
     // Signaler la fin
-    peer.send(JSON.stringify({
+    broadcastToAllPeers({
         type: 'both-file-complete',
         name: file.name
-    }));
+    });
     
-    console.log('📤 Fichier envoyé:', file.name);
+    console.log('📤 Fichier envoyé à tous les participants:', file.name);
 }
 
 // Variables pour la réception de fichiers en mode both
@@ -2059,7 +2643,8 @@ async function handleBothFileMeta(data) {
         name: data.name,
         size: data.size,
         mimeType: data.mimeType,
-        iv: fromBase64(data.iv)
+        iv: fromBase64(data.iv),
+        senderPseudo: data.senderPseudo || 'Anonyme'
     };
     incomingBothChunks = [];
     
@@ -2071,6 +2656,7 @@ async function handleBothFileMeta(data) {
     itemDiv.innerHTML = `
         <span class="file-icon">📥</span>
         <div class="file-details">
+            <span class="file-sender">${incomingBothFile.senderPseudo}</span>
             <span class="file-name">${data.name}</span>
             <span class="file-size">${formatFileSize(data.size)}</span>
         </div>
@@ -2078,7 +2664,7 @@ async function handleBothFileMeta(data) {
     `;
     listEl.appendChild(itemDiv);
     
-    console.log('📥 Réception fichier:', data.name);
+    console.log('📥 Réception fichier de', incomingBothFile.senderPseudo, ':', data.name);
 }
 
 function handleBothFileChunk(data) {

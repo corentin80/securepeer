@@ -26,7 +26,6 @@ const requestHandler = (req, res) => {
     fs.readFile(filePath, (err, content) => {
         if (err) {
             if (err.code === 'ENOENT') {
-                // Servir index.html pour toutes les routes (SPA)
                 fs.readFile(path.join(__dirname, 'public', 'index.html'), (err, content) => {
                     if (err) {
                         res.writeHead(500);
@@ -51,123 +50,160 @@ function createHttpOrHttpsServer() {
     return http.createServer(requestHandler);
 }
 
-// Créer serveur HTTP ou HTTPS selon présence des certificats
 const server = createHttpOrHttpsServer();
-
-// WebSocket Server attaché au serveur HTTP
 const wss = new WebSocket.Server({ server });
 
-// Stockage des rooms en mémoire (pas de persistance)
+// Stockage des rooms en mémoire
+// Structure: { participants: Map<odId, {ws, pseudo, isCreator}>, fileInfo, creatorId, deleteTimer }
 const rooms = new Map();
+
+// Délai avant suppression d'une room vide (5 minutes)
+const ROOM_EMPTY_TIMEOUT = 5 * 60 * 1000;
 
 wss.on('connection', (ws) => {
     console.log('🔌 Nouvelle connexion WebSocket');
     
     let currentRoom = null;
-    let role = null; // 'sender' ou 'receiver'
+    let odId = uuidv4().substring(0, 8); // ID unique pour ce participant
+    let pseudo = null;
+    let isCreator = false;
     
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
             
             switch (data.type) {
-                case 'create-room':
-                    // L'expéditeur crée une nouvelle room
+                case 'create-room': {
                     const roomId = uuidv4().substring(0, 8);
+                    pseudo = data.pseudo || 'Anonyme';
+                    isCreator = true;
+                    
+                    const participants = new Map();
+                    participants.set(odId, { ws, pseudo, isCreator: true });
+                    
                     rooms.set(roomId, {
-                        sender: ws,
-                        receiver: null,
-                        fileInfo: data.fileInfo || null
+                        participants,
+                        fileInfo: data.fileInfo || null,
+                        creatorId: odId
                     });
+                    
                     currentRoom = roomId;
-                    role = 'sender';
                     
                     ws.send(JSON.stringify({
                         type: 'room-created',
-                        roomId: roomId
+                        roomId: roomId,
+                        odId: odId
                     }));
                     
-                    console.log(`📦 Room créée: ${roomId}`);
+                    console.log(`📦 Room créée: ${roomId} par ${pseudo}`);
                     break;
-                    
-                case 'join-room':
-                    // Le destinataire rejoint une room existante
+                }
+                
+                case 'join-room': {
                     const room = rooms.get(data.roomId);
                     
                     if (!room) {
                         ws.send(JSON.stringify({
                             type: 'error',
-                            message: 'Lien expiré ou invalide. L\'expéditeur s\'est déconnecté.'
+                            message: 'Lien expiré ou invalide.'
                         }));
                         return;
                     }
                     
-                    if (room.receiver) {
-                        ws.send(JSON.stringify({
-                            type: 'error',
-                            message: 'Un destinataire est déjà connecté à cette room.'
-                        }));
-                        return;
+                    // Annuler le timer de suppression si quelqu'un rejoint
+                    if (room.deleteTimer) {
+                        clearTimeout(room.deleteTimer);
+                        room.deleteTimer = null;
+                        console.log(`✅ Timer de suppression annulé pour room ${data.roomId}`);
                     }
                     
-                    room.receiver = ws;
+                    pseudo = data.pseudo || 'Anonyme';
                     currentRoom = data.roomId;
-                    role = 'receiver';
                     
-                    // Notifier l'expéditeur que le destinataire a rejoint
-                    if (room.sender && room.sender.readyState === WebSocket.OPEN) {
-                        room.sender.send(JSON.stringify({
-                            type: 'peer-joined'
-                        }));
-                    }
+                    // Ajouter ce participant
+                    room.participants.set(odId, { ws, pseudo, isCreator: false });
                     
-                    // Envoyer les infos du fichier au destinataire
+                    // Envoyer la liste des participants existants au nouveau
+                    const existingParticipants = [];
+                    room.participants.forEach((p, odid) => {
+                        if (odid !== odId) {
+                            existingParticipants.push({ odId: odid, pseudo: p.pseudo, isCreator: p.isCreator });
+                        }
+                    });
+                    
                     ws.send(JSON.stringify({
                         type: 'room-joined',
-                        fileInfo: room.fileInfo
+                        roomId: data.roomId,
+                        odId: odId,
+                        fileInfo: room.fileInfo,
+                        participants: existingParticipants
                     }));
                     
-                    console.log(`🤝 Destinataire rejoint la room: ${data.roomId}`);
-                    break;
+                    // Notifier tous les autres participants
+                    room.participants.forEach((p, odid) => {
+                        if (odid !== odId && p.ws.readyState === WebSocket.OPEN) {
+                            p.ws.send(JSON.stringify({
+                                type: 'peer-joined',
+                                odId: odId,
+                                pseudo: pseudo,
+                                isCreator: false
+                            }));
+                        }
+                    });
                     
-                case 'signal':
-                    // Relayer les messages de signalisation WebRTC (SDP, ICE)
+                    console.log(`🤝 ${pseudo} rejoint la room: ${data.roomId} (${room.participants.size} participants)`);
+                    break;
+                }
+                
+                case 'signal': {
+                    // Relayer le signal WebRTC vers un participant spécifique
                     if (!currentRoom) return;
                     
-                    const signalRoom = rooms.get(currentRoom);
-                    if (!signalRoom) return;
+                    const room = rooms.get(currentRoom);
+                    if (!room) return;
                     
-                    const target = role === 'sender' ? signalRoom.receiver : signalRoom.sender;
+                    const targetId = data.targetId;
+                    const target = room.participants.get(targetId);
                     
-                    if (target && target.readyState === WebSocket.OPEN) {
-                        target.send(JSON.stringify({
+                    if (target && target.ws.readyState === WebSocket.OPEN) {
+                        target.ws.send(JSON.stringify({
                             type: 'signal',
-                            signal: data.signal
+                            signal: data.signal,
+                            fromId: odId,
+                            fromPseudo: pseudo
                         }));
                     }
                     break;
+                }
+                
+                case 'receiver-ready': {
+                    // Notifier tous les autres participants que celui-ci est prêt
+                    if (!currentRoom) return;
                     
-                case 'update-file-info':
-                    // Mettre à jour les infos du fichier dans la room
-                    if (currentRoom && role === 'sender') {
-                        const r = rooms.get(currentRoom);
-                        if (r) {
-                            r.fileInfo = data.fileInfo;
-                        }
-                    }
-                    break;
+                    const room = rooms.get(currentRoom);
+                    if (!room) return;
                     
-                case 'receiver-ready':
-                    // Le destinataire a entré le mot de passe et est prêt pour P2P
-                    if (currentRoom && role === 'receiver') {
-                        const readyRoom = rooms.get(currentRoom);
-                        if (readyRoom && readyRoom.sender && readyRoom.sender.readyState === WebSocket.OPEN) {
-                            readyRoom.sender.send(JSON.stringify({
-                                type: 'receiver-ready'
+                    room.participants.forEach((p, odid) => {
+                        if (odid !== odId && p.ws.readyState === WebSocket.OPEN) {
+                            p.ws.send(JSON.stringify({
+                                type: 'receiver-ready',
+                                odId: odId,
+                                pseudo: pseudo
                             }));
                         }
+                    });
+                    break;
+                }
+                
+                case 'update-file-info': {
+                    if (currentRoom && isCreator) {
+                        const room = rooms.get(currentRoom);
+                        if (room) {
+                            room.fileInfo = data.fileInfo;
+                        }
                     }
                     break;
+                }
             }
         } catch (err) {
             console.error('❌ Erreur parsing message:', err);
@@ -181,25 +217,34 @@ wss.on('connection', (ws) => {
             const room = rooms.get(currentRoom);
             
             if (room) {
-                if (role === 'sender') {
-                    // L'expéditeur part -> notifier le destinataire et supprimer la room
-                    if (room.receiver && room.receiver.readyState === WebSocket.OPEN) {
-                        room.receiver.send(JSON.stringify({
-                            type: 'peer-disconnected',
-                            message: 'L\'expéditeur s\'est déconnecté.'
+                // Retirer ce participant
+                room.participants.delete(odId);
+                
+                // Notifier les autres participants
+                room.participants.forEach((p) => {
+                    if (p.ws.readyState === WebSocket.OPEN) {
+                        p.ws.send(JSON.stringify({
+                            type: 'peer-left',
+                            odId: odId,
+                            pseudo: pseudo
                         }));
                     }
-                    rooms.delete(currentRoom);
-                    console.log(`🗑️ Room supprimée: ${currentRoom}`);
-                } else if (role === 'receiver') {
-                    // Le destinataire part -> notifier l'expéditeur
-                    if (room.sender && room.sender.readyState === WebSocket.OPEN) {
-                        room.sender.send(JSON.stringify({
-                            type: 'peer-disconnected',
-                            message: 'Le destinataire s\'est déconnecté.'
-                        }));
-                    }
-                    room.receiver = null;
+                });
+                
+                // Vérifier si la room est vide
+                if (room.participants.size === 0) {
+                    // Démarrer un timer pour supprimer la room après 5 min
+                    console.log(`⏰ Room ${currentRoom} vide, suppression dans 5 minutes...`);
+                    room.deleteTimer = setTimeout(() => {
+                        // Vérifier à nouveau si la room est toujours vide
+                        const roomCheck = rooms.get(currentRoom);
+                        if (roomCheck && roomCheck.participants.size === 0) {
+                            rooms.delete(currentRoom);
+                            console.log(`🗑️ Room ${currentRoom} supprimée (vide depuis 5 min)`);
+                        }
+                    }, ROOM_EMPTY_TIMEOUT);
+                } else {
+                    console.log(`⏸️ ${pseudo} parti, room reste active: ${currentRoom} (${room.participants.size} restants)`);
                 }
             }
         }
@@ -214,12 +259,12 @@ server.listen(PORT, () => {
     console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
-║   🚀 Serveur P2P File Transfer démarré                   ║
+║   🚀 Serveur P2P Group Chat démarré                      ║
 ║                                                           ║
 ║   📡 URL locale:  http://localhost:${PORT}                 ║
 ║                                                           ║
+║   Support: Groupe jusqu'à 20 participants (Mesh P2P)     ║
 ║   Le serveur ne stocke AUCUNE donnée.                    ║
-║   Il ne fait que relayer les signaux WebRTC.             ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
     `);
