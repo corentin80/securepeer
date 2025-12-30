@@ -248,7 +248,7 @@ async function importKeyFromBase64(base64String) {
         'raw',
         keyData,
         { name: 'AES-GCM', length: 256 },
-        false,
+        true, // extractable = true pour pouvoir la ré-exporter lors de saveSessionToStorage
         ['encrypt', 'decrypt']
     );
     
