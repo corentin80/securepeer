@@ -557,7 +557,23 @@ function handleWebSocketMessage(data) {
             break;
             
         case 'error':
-            showError(data.message);
+            console.log('❌ Erreur serveur:', data.message);
+            // Si l'erreur indique une session/room expirée, effacer et revenir à l'accueil
+            const expiredErrors = ['expiré', 'invalide', 'expired', 'invalid', 'not found', 'introuvable'];
+            const isSessionExpired = expiredErrors.some(e => 
+                data.message && data.message.toLowerCase().includes(e)
+            );
+            
+            if (isSessionExpired) {
+                console.log('🗑️ Session expirée détectée, nettoyage...');
+                clearSessionStorage();
+                showError(data.message + '\n\nRetour à l\'accueil dans 3 secondes...');
+                setTimeout(() => {
+                    location.reload();
+                }, 3000);
+            } else {
+                showError(data.message);
+            }
             break;
     }
 }
@@ -1758,7 +1774,9 @@ function setupEventListeners() {
     });
     
     elements.retryTransfer.addEventListener('click', () => {
-        window.location.reload();
+        // Effacer la session pour éviter de recharger une session invalide
+        clearSessionStorage();
+        window.location.href = window.location.origin + window.location.pathname;
     });
     
     // Boutons pour fermer la session
