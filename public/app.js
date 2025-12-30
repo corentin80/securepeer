@@ -299,10 +299,16 @@ function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
     
+    console.log('🌐 [WS] Connexion à:', wsUrl);
     ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
         console.log('🌐 WebSocket connecté');
+        console.log('   📍 URL actuelle:', window.location.href);
+        console.log('   #️⃣ Hash:', window.location.hash);
+        console.log('   📦 roomId actuel:', roomId);
+        console.log('   👤 pseudo:', userPseudo);
+        console.log('   📥 isReceiver:', isReceiver);
         
         // Récupérer le pseudo (déjà défini avant connectWebSocket)
         // userPseudo est défini dans setupPseudoSection()
@@ -315,6 +321,7 @@ function connectWebSocket() {
         if (isReceiver && !isReconnection) {
             // Mode destinataire pour la première fois : rejoindre la room
             console.log('📥 Première connexion destinataire');
+            console.log('   📦 Envoi join-room avec roomId:', roomId);
             ws.send(JSON.stringify({
                 type: 'join-room',
                 roomId: roomId,
@@ -324,6 +331,7 @@ function connectWebSocket() {
         } else if (isReceiver && isReconnection) {
             // Destinataire qui se reconnecte
             console.log('🔄 Reconnexion destinataire');
+            console.log('   📦 Envoi join-room avec roomId:', roomId);
             ws.send(JSON.stringify({
                 type: 'join-room',
                 roomId: roomId,
@@ -557,6 +565,9 @@ function handleWebSocketMessage(data) {
             break;
             
         case 'error':
+            console.error('❌ [WS-ERROR] Erreur reçue du serveur:', data.message);
+            console.error('   📦 roomId actuel:', roomId);
+            console.error('   📍 URL:', window.location.href);
             showError(data.message);
             break;
     }
@@ -2272,6 +2283,13 @@ function updateLanguage() {
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('🚀 [INIT] DOMContentLoaded - Démarrage de l\'application');
     
+    // DEBUG MOBILE - afficher les infos de l'URL
+    const fullUrl = window.location.href;
+    const hashRaw = window.location.hash;
+    console.log('📱 [DEBUG-MOBILE] URL complète:', fullUrl);
+    console.log('📱 [DEBUG-MOBILE] Hash brut:', hashRaw);
+    console.log('📱 [DEBUG-MOBILE] User Agent:', navigator.userAgent);
+    
     // Vérifier d'abord si on a un hash (lien de partage)
     const hash = window.location.hash.substring(1);
     const hasShareLink = hash && hash.includes('_');
@@ -2287,6 +2305,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Extraire le roomId du hash
         const hashRoomId = hash.split('_')[0];
         console.log('🔗 [INIT] Lien de partage détecté, roomId:', hashRoomId);
+        console.log('🔗 [INIT] Hash complet (longueur):', hash.length, 'caractères');
         
         // Vérifier si c'est la même session que celle stockée
         if (restored && restored.roomId === hashRoomId && restored.isReceiver) {
