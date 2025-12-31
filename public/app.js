@@ -46,6 +46,31 @@ let chatMessages = [];
 let userPseudo = ''; // Pseudo de l'utilisateur actuel
 let remoteUserPseudo = ''; // Pseudo de l'autre utilisateur (legacy, pour 1:1)
 
+// Chat UI state
+let replyToMessageId = null; // message cible pour une réponse/quote
+let editingMessageId = null; // message en cours d'édition
+let typingSignalTimeout = null; // debounce pour signaux "typing"
+let typingIndicatorTimer = null; // timer d'effacement du statut "X écrit..."
+
+// Chat search and pinned messages
+let chatSearchQuery = '';
+let chatSearchUserFilter = '';
+let pinnedMessageIds = new Set(); // IDs des messages épinglés
+
+// Messages éphémères
+let ephemeralMode = false;
+let ephemeralDuration = 30; // secondes par défaut
+
+// Session security options
+let sessionOptions = {
+    expirationMinutes: 0,      // 0 = illimité
+    maxParticipants: 20,       // 1-20
+    requireApproval: false,    // Approbation manuelle des participants
+    autoLock: false,           // Verrouiller après 1er participant
+    isLocked: false            // État actuel du verrouillage
+};
+let pendingApprovals = new Map(); // Map<odId, {pseudo, timestamp}> - participants en attente d'approbation
+
 // ===== ECDH (Diffie-Hellman) État =====
 let ecdhKeyPair = null; // Ma paire de clés ECDH {privateKey, publicKey}
 let ecdhPublicKeyB64 = null; // Ma clé publique en base64 pour partage
@@ -77,6 +102,13 @@ const elements = {
     passwordBlock: document.getElementById('password-block'),
     passwordInput: document.getElementById('password-input'),
     sendFileBtn: document.getElementById('send-file-btn'),
+    
+    // Security options
+    sessionExpiration: document.getElementById('session-expiration'),
+    maxParticipants: document.getElementById('max-participants'),
+    requireApproval: document.getElementById('require-approval'),
+    autoLock: document.getElementById('auto-lock'),
+    
     linkSection: document.getElementById('link-section'),
     shareLink: document.getElementById('share-link'),
     copyLink: document.getElementById('copy-link'),
@@ -143,7 +175,8 @@ const elements = {
     // Close session buttons
     closeSession: document.getElementById('close-session'),
     closeChatSession: document.getElementById('close-chat-session'),
-    closeReceiverSession: document.getElementById('close-receiver-session')
+    closeReceiverSession: document.getElementById('close-receiver-session'),
+    lockSessionBtn: document.getElementById('lock-session-btn')
 };
 
 // ===== UTILITAIRES =====
@@ -177,6 +210,114 @@ function showError(message) {
     hideAllSections();
     elements.errorMessage.textContent = message;
     elements.errorSection.classList.remove('hidden');
+}
+
+// ===== SYSTÈME D'APPROBATION ET VERROUILLAGE =====
+
+function showApprovalRequest(odId, pseudo) {
+    // Créer une popup pour approuver/refuser
+    const existing = document.querySelector('.approval-popup');
+    if (existing) existing.remove();
+    
+    const popup = document.createElement('div');
+    popup.className = 'approval-popup';
+    popup.innerHTML = `
+        <div class="approval-content">
+            <h3>✋ Demande d'accès</h3>
+            <p><strong>${escapeHtml(pseudo)}</strong> souhaite rejoindre la session</p>
+            <div class="approval-actions">
+                <button class="btn btn-success approve-btn" data-odid="${odId}">✓ Accepter</button>
+                <button class="btn btn-danger reject-btn" data-odid="${odId}">✕ Refuser</button>
+            </div>
+            <p class="approval-hint">En attente: ${pendingApprovals.size} demande(s)</p>
+        </div>
+    `;
+    
+    document.body.appendChild(popup);
+    
+    // Event listeners
+    popup.querySelector('.approve-btn').addEventListener('click', () => {
+        approveParticipant(odId);
+        popup.remove();
+    });
+    
+    popup.querySelector('.reject-btn').addEventListener('click', () => {
+        rejectParticipant(odId);
+        popup.remove();
+    });
+}
+
+function approveParticipant(odId) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'approve-participant',
+            odId: odId
+        }));
+        pendingApprovals.delete(odId);
+        showToast('✅ Participant accepté');
+        
+        // Afficher la prochaine demande s'il y en a
+        if (pendingApprovals.size > 0) {
+            const next = pendingApprovals.entries().next().value;
+            if (next) {
+                showApprovalRequest(next[0], next[1].pseudo);
+            }
+        }
+    }
+}
+
+function rejectParticipant(odId) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'reject-participant',
+            odId: odId
+        }));
+        pendingApprovals.delete(odId);
+        showToast('❌ Participant refusé');
+        
+        // Afficher la prochaine demande s'il y en a
+        if (pendingApprovals.size > 0) {
+            const next = pendingApprovals.entries().next().value;
+            if (next) {
+                showApprovalRequest(next[0], next[1].pseudo);
+            }
+        }
+    }
+}
+
+function updatePendingBadge(count) {
+    let badge = document.querySelector('.pending-badge');
+    if (count > 0) {
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'pending-badge';
+            const lockBtn = document.querySelector('.lock-session-btn');
+            if (lockBtn) {
+                lockBtn.parentElement.appendChild(badge);
+            }
+        }
+        badge.textContent = count;
+    } else if (badge) {
+        badge.remove();
+    }
+}
+
+function updateLockButton() {
+    const lockBtn = document.querySelector('.lock-session-btn');
+    if (lockBtn) {
+        lockBtn.textContent = sessionOptions.isLocked ? '🔓 Déverrouiller' : '🔒 Verrouiller';
+        lockBtn.title = sessionOptions.isLocked ? 'Permettre de nouveaux participants' : 'Bloquer les nouveaux participants';
+    }
+}
+
+function toggleSessionLock() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const newLockState = !sessionOptions.isLocked;
+        ws.send(JSON.stringify({
+            type: 'lock-session',
+            locked: newLockState
+        }));
+    }
 }
 
 // ===== SÉCURITÉ - Échappement HTML pour prévenir XSS =====
@@ -555,11 +696,31 @@ function connectWebSocket() {
             ws.send(JSON.stringify(rejoinMsg));
         } else {
             // Mode expéditeur : créer une nouvelle room
-            console.log('📤 Création nouvelle room');
+            // Récupérer les options de sécurité depuis l'UI
+            if (elements.sessionExpiration) {
+                sessionOptions.expirationMinutes = parseInt(elements.sessionExpiration.value) || 0;
+            }
+            if (elements.maxParticipants) {
+                sessionOptions.maxParticipants = parseInt(elements.maxParticipants.value) || 20;
+            }
+            if (elements.requireApproval) {
+                sessionOptions.requireApproval = elements.requireApproval.checked;
+            }
+            if (elements.autoLock) {
+                sessionOptions.autoLock = elements.autoLock.checked;
+            }
+            
+            console.log('📤 Création nouvelle room avec options:', sessionOptions);
             ws.send(JSON.stringify({
                 type: 'create-room',
                 fileInfo: fileInfo,
-                pseudo: userPseudo
+                pseudo: userPseudo,
+                options: {
+                    expirationMinutes: sessionOptions.expirationMinutes,
+                    maxParticipants: sessionOptions.maxParticipants,
+                    requireApproval: sessionOptions.requireApproval,
+                    autoLock: sessionOptions.autoLock
+                }
             }));
         }
     };
@@ -772,13 +933,70 @@ function handleWebSocketMessage(data) {
             break;
             
         case 'session-closed':
-            // Le créateur a fermé la session -> Retourner à l'accueil
-            console.log('🔴 Session fermée:', data.message);
+            // La session a été fermée
+            console.log('🔴 Session fermée par:', data.closedBy);
             clearSessionStorage();
+            
+            // Fermer les connexions P2P
+            peers.forEach(p => p.destroy());
+            peers.clear();
+            
+            const closeMessage = data.isCreatorClose 
+                ? `La session a été fermée par le créateur (${data.closedBy}).`
+                : `${data.closedBy} a quitté la session.`;
+            
+            showError(closeMessage + '\n\nRetour à l\'accueil...');
+            setTimeout(() => {
+                window.location.href = window.location.origin + window.location.pathname;
+            }, 2000);
+            break;
+        
+        case 'approval-pending':
+            // Je suis en attente d'approbation
+            console.log('✋ En attente d\'approbation...');
+            showToast('⏳ ' + data.message);
+            if (elements.receiverStatus) {
+                elements.receiverStatus.textContent = '⏳ ' + data.message;
+            }
+            break;
+        
+        case 'approval-request':
+            // Un participant demande à rejoindre (je suis le créateur)
+            console.log('✋ Demande d\'approbation de:', data.pseudo);
+            pendingApprovals.set(data.odId, { pseudo: data.pseudo, timestamp: Date.now() });
+            showApprovalRequest(data.odId, data.pseudo);
+            break;
+        
+        case 'approval-rejected':
+            // Ma demande a été refusée
+            console.log('❌ Demande refusée');
             showError(data.message);
             setTimeout(() => {
-                location.reload();
-            }, 2000);
+                clearSessionStorage();
+                window.location.href = window.location.origin + window.location.pathname;
+            }, 3000);
+            break;
+        
+        case 'approval-update':
+            // Mise à jour du nombre de demandes en attente
+            console.log('📊 Demandes en attente:', data.pendingCount);
+            updatePendingBadge(data.pendingCount);
+            break;
+        
+        case 'session-locked':
+            // La session est verrouillée
+            console.log('🔒 Session verrouillée');
+            sessionOptions.isLocked = true;
+            showToast('🔒 ' + data.message);
+            updateLockButton();
+            break;
+        
+        case 'session-unlocked':
+            // La session est déverrouillée
+            console.log('🔓 Session déverrouillée');
+            sessionOptions.isLocked = false;
+            showToast('🔓 ' + data.message);
+            updateLockButton();
             break;
             
         case 'error':
@@ -1178,6 +1396,27 @@ function handlePeerData(rawData, fromOdId) {
         switch (data.type) {
             case 'chat-message':
                 handleChatMessage(data, fromOdId);
+                break;
+            case 'chat-edit':
+                handleChatEdit(data, fromOdId);
+                break;
+            case 'chat-delete':
+                handleChatDelete(data);
+                break;
+            case 'chat-reaction':
+                handleChatReaction(data);
+                break;
+            case 'chat-pin':
+                handleChatPin(data);
+                break;
+            case 'chat-export-notify':
+                handleExportNotify(data);
+                break;
+            case 'chat-ephemeral-sync':
+                handleEphemeralSync(data);
+                break;
+            case 'chat-typing':
+                handleTypingSignal(data, fromOdId);
                 break;
             
             // Mode both - fichiers bidirectionnels
@@ -1774,6 +2013,66 @@ function clearSessionStorage() {
     console.log('🗑️ Session effacée');
 }
 
+function closeSessionProperly() {
+    // Notifier le serveur de la fermeture
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'close-room' }));
+    }
+    
+    // Nettoyer localement
+    clearSessionStorage();
+    
+    // Fermer les connexions P2P
+    peers.forEach(p => p.destroy());
+    peers.clear();
+    
+    // Fermer le WebSocket
+    if (ws) ws.close();
+    
+    // Rediriger vers l'accueil
+    window.location.href = window.location.origin + window.location.pathname;
+}
+
+function setupCloseSessionButtons() {
+    // Boutons pour fermer la session (attachés une seule fois)
+    if (elements.closeSession && !elements.closeSession._hasCloseListener) {
+        elements.closeSession.addEventListener('click', () => {
+            if (confirm('Voulez-vous vraiment fermer cette session ?')) {
+                closeSessionProperly();
+            }
+        });
+        elements.closeSession._hasCloseListener = true;
+    }
+    
+    if (elements.closeChatSession && !elements.closeChatSession._hasCloseListener) {
+        elements.closeChatSession.addEventListener('click', () => {
+            if (confirm('Voulez-vous vraiment fermer cette session ?')) {
+                closeSessionProperly();
+            }
+        });
+        elements.closeChatSession._hasCloseListener = true;
+    }
+    
+    if (elements.closeReceiverSession && !elements.closeReceiverSession._hasCloseListener) {
+        elements.closeReceiverSession.addEventListener('click', () => {
+            if (confirm('Voulez-vous vraiment fermer cette session ?')) {
+                closeSessionProperly();
+            }
+        });
+        elements.closeReceiverSession._hasCloseListener = true;
+    }
+    
+    // Bouton de verrouillage de session (créateur uniquement)
+    if (elements.lockSessionBtn && !elements.lockSessionBtn._hasLockListener) {
+        elements.lockSessionBtn.addEventListener('click', () => {
+            toggleSessionLock();
+        });
+        elements.lockSessionBtn._hasLockListener = true;
+    }
+    
+    console.log('🚪 Event listeners de fermeture de session attachés');
+}
+
 function handleHashConnection(hash) {
     // Mode destinataire - cacher la sélection de mode
     elements.modeSelection.classList.add('hidden');
@@ -2098,43 +2397,6 @@ function setupEventListeners() {
         clearSessionStorage();
         window.location.href = window.location.origin + window.location.pathname;
     });
-    
-    // Boutons pour fermer la session
-    if (elements.closeSession) {
-        elements.closeSession.addEventListener('click', () => {
-            if (confirm('Voulez-vous vraiment fermer cette session ?')) {
-                clearSessionStorage();
-                if (ws) ws.close();
-                peers.forEach(p => p.destroy());
-                peers.clear();
-                location.reload();
-            }
-        });
-    }
-    
-    if (elements.closeChatSession) {
-        elements.closeChatSession.addEventListener('click', () => {
-            if (confirm('Voulez-vous vraiment fermer cette session ?')) {
-                clearSessionStorage();
-                if (ws) ws.close();
-                peers.forEach(p => p.destroy());
-                peers.clear();
-                location.reload();
-            }
-        });
-    }
-    
-    if (elements.closeReceiverSession) {
-        elements.closeReceiverSession.addEventListener('click', () => {
-            if (confirm('Voulez-vous vraiment fermer cette session ?')) {
-                clearSessionStorage();
-                if (ws) ws.close();
-                peers.forEach(p => p.destroy());
-                peers.clear();
-                location.reload();
-            }
-        });
-    }
     
     // Clic sur la zone de drop
     elements.dropZone.addEventListener('click', () => {
@@ -2670,15 +2932,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateLanguage();
     setupThemeToggle();
     
+    // Attacher les event listeners des boutons de fermeture de session (toujours, quel que soit le mode)
+    setupCloseSessionButtons();
+    
+    // Initialiser les fonctionnalités du chat
+    setupChatSearch();
+    setupPinnedMessages();
+    setupChatExport();
+    setupEphemeralMessages();
+    
     // Raccourci Escape pour fermer la session
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && (roomId || isReceiver)) {
             if (confirm('Voulez-vous vraiment fermer cette session ? (Appuyez sur Escape)')) {
-                clearSessionStorage();
-                if (ws) ws.close();
-                peers.forEach(p => p.destroy());
-                peers.clear();
-                location.reload();
+                closeSessionProperly();
             }
         }
     });
@@ -3045,6 +3312,7 @@ function setupChat() {
     }
     if (elements.chatInput) {
         elements.chatInput.addEventListener('keyup', (e) => {
+            sendTypingSignal(false);
             if (e.key === 'Enter') sendChatMessage(false);
         });
     }
@@ -3055,46 +3323,153 @@ function setupChat() {
     }
     if (elements.receiverChatInput) {
         elements.receiverChatInput.addEventListener('keyup', (e) => {
+            sendTypingSignal(true);
             if (e.key === 'Enter') sendChatMessage(true);
         });
     }
 }
 
-async function sendChatMessage(isReceiverSide) {
-    const inputEl = isReceiverSide ? elements.receiverChatInput : elements.chatInput;
-    const messagesEl = isReceiverSide ? elements.receiverChatMessages : elements.chatMessages;
+function getActiveChatElements(isReceiverSide) {
+    return {
+        inputEl: isReceiverSide ? elements.receiverChatInput : elements.chatInput,
+        messagesEl: isReceiverSide ? elements.receiverChatMessages : elements.chatMessages,
+        statusEl: isReceiverSide ? elements.receiverChatStatus : elements.chatStatus
+    };
+}
+
+function generateMessageId() {
+    const arr = new Uint8Array(12);
+    window.crypto.getRandomValues(arr);
+    return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function findMessageById(messageId) {
+    return chatMessages.find(m => m.id === messageId) || null;
+}
+
+function setReplyPreview(targetId, isReceiverSide) {
+    replyToMessageId = targetId;
+    const { inputEl } = getActiveChatElements(isReceiverSide);
+    const target = findMessageById(targetId);
+    if (!inputEl || !target) return;
     
+    // Annuler l'édition si active
+    editingMessageId = null;
+    document.querySelectorAll('.editing-indicator').forEach(ind => ind.remove());
+    
+    // Ajouter un indicateur visuel de réponse
+    const replyIndicator = document.createElement('div');
+    replyIndicator.className = 'reply-indicator';
+    replyIndicator.innerHTML = `
+        <div class="reply-preview">
+            <span class="reply-icon">↩</span>
+            <div class="reply-info">
+                <strong>${escapeHtml(target.pseudo || 'Message')}</strong>
+                <span>${escapeHtml(target.text.slice(0, 50))}${target.text.length > 50 ? '…' : ''}</span>
+            </div>
+            <button class="cancel-reply-btn" onclick="cancelReply()">✕</button>
+        </div>
+    `;
+    
+    const inputContainer = inputEl.parentElement;
+    const existingIndicator = inputContainer.querySelector('.reply-indicator');
+    if (existingIndicator) existingIndicator.remove();
+    
+    inputContainer.insertBefore(replyIndicator, inputEl);
+    inputEl.focus();
+}
+
+function cancelReply() {
+    replyToMessageId = null;
+    document.querySelectorAll('.reply-indicator').forEach(ind => ind.remove());
+}
+
+function clearReplyEditState(isReceiverSide) {
+    replyToMessageId = null;
+    editingMessageId = null;
+    const { inputEl } = getActiveChatElements(isReceiverSide);
+    if (inputEl) {
+        inputEl.placeholder = 'Votre message...';
+    }
+    
+    // Nettoyer les indicateurs visuels
+    document.querySelectorAll('.editing-indicator, .reply-indicator').forEach(ind => ind.remove());
+}
+
+async function sendChatMessage(isReceiverSide) {
+    const { inputEl, messagesEl } = getActiveChatElements(isReceiverSide);
     const text = inputEl.value.trim();
-    // Vérifier qu'on a au moins un peer connecté
     const hasConnectedPeer = Array.from(peers.values()).some(p => p.connected);
     if (!text || !hasConnectedPeer) return;
     
     try {
-        // Chiffrer le message
         const encoder = new TextEncoder();
         const plaintext = encoder.encode(text);
-        
         const iv = window.crypto.getRandomValues(new Uint8Array(12));
-        const ciphertext = await window.crypto.subtle.encrypt(
+        const cipherBuf = await window.crypto.subtle.encrypt(
             { name: 'AES-GCM', iv },
             cryptoKey,
             plaintext
         );
-        
-        // Envoyer via le canal P2P à tous les peers
+
+        // Mode édition : envoyer un patch
+        if (editingMessageId) {
+            const editPayload = {
+                type: 'chat-edit',
+                messageId: editingMessageId,
+                iv: toBase64(iv),
+                ciphertext: toBase64(new Uint8Array(cipherBuf)),
+                senderPseudo: userPseudo,
+                timestamp: Date.now()
+            };
+            broadcastToAllPeers(editPayload);
+
+            // Mise à jour locale
+            const target = findMessageById(editingMessageId);
+            if (target) {
+                target.text = text;
+                target.edited = true;
+            }
+            inputEl.value = '';
+            clearReplyEditState(isReceiverSide);
+            renderChatMessages(messagesEl);
+            console.log('✏️ Message édité');
+            return;
+        }
+
+        const messageId = generateMessageId();
         const messageData = {
             type: 'chat-message',
+            messageId,
+            replyToId: replyToMessageId,
             iv: toBase64(iv),
-            ciphertext: toBase64(new Uint8Array(ciphertext)),
+            ciphertext: toBase64(new Uint8Array(cipherBuf)),
             senderPseudo: userPseudo,
             timestamp: Date.now()
         };
-        
         broadcastToAllPeers(messageData);
-        
-        // Afficher localement
-        addChatMessage(text, true, messagesEl, userPseudo);
+
+        // Local append
+        chatMessages.push({
+            id: messageId,
+            text,
+            isSent: true,
+            pseudo: userPseudo,
+            timestamp: Date.now(),
+            replyToId: replyToMessageId,
+            edited: false,
+            deleted: false,
+            reactions: {},
+            ephemeral: ephemeralMode ? ephemeralDuration : null
+        });
         inputEl.value = '';
+        clearReplyEditState(isReceiverSide);
+        renderChatMessages(messagesEl);
+        
+        // Programmer la suppression si éphémère
+        if (ephemeralMode) {
+            scheduleMessageDeletion(messageId, ephemeralDuration);
+        }
         
         console.log('💬 Message envoyé à', peers.size, 'peer(s)');
     } catch (err) {
@@ -3119,10 +3494,27 @@ async function handleChatMessage(data, fromOdId) {
         
         // Récupérer le pseudo de l'expéditeur
         const senderPseudo = data.senderPseudo || participants.get(fromOdId)?.pseudo || 'Anonyme';
-        
-        // Afficher le message reçu
         const messagesEl = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
-        addChatMessage(text, false, messagesEl, senderPseudo);
+        
+        const messageId = data.messageId || generateMessageId();
+        chatMessages.push({
+            id: messageId,
+            text,
+            isSent: false,
+            pseudo: senderPseudo,
+            timestamp: data.timestamp || Date.now(),
+            replyToId: data.replyToId || null,
+            edited: false,
+            deleted: false,
+            reactions: {},
+            ephemeral: ephemeralMode ? ephemeralDuration : null
+        });
+        renderChatMessages(messagesEl);
+        
+        // Programmer la suppression si éphémère
+        if (ephemeralMode) {
+            scheduleMessageDeletion(messageId, ephemeralDuration);
+        }
         
         console.log('💬 Message reçu de', senderPseudo);
     } catch (err) {
@@ -3130,33 +3522,429 @@ async function handleChatMessage(data, fromOdId) {
     }
 }
 
-function addChatMessage(text, isSent, containerEl, pseudo = '') {
-    const msgDiv = document.createElement('div');
-    msgDiv.className = `chat-message ${isSent ? 'sent' : 'received'}`;
+function renderChatMessages(containerEl) {
+    if (!containerEl) return;
+    containerEl.innerHTML = '';
+    const reactionList = ['👍', '❤️', '😂', '😮', '😢', '👏'];
+
+    // Filtrer les messages selon la recherche
+    let filteredMessages = chatMessages;
+    let searchMatchCount = 0;
     
-    // Ajouter le pseudo pour les messages reçus (surtout utile en groupe)
-    if (!isSent && pseudo) {
-        const pseudoSpan = document.createElement('span');
-        pseudoSpan.className = 'message-pseudo';
-        pseudoSpan.textContent = pseudo;
-        msgDiv.appendChild(pseudoSpan);
+    if (chatSearchQuery || chatSearchUserFilter) {
+        filteredMessages = chatMessages.filter(msg => {
+            if (msg.deleted) return false;
+            
+            // Filtre par utilisateur
+            if (chatSearchUserFilter) {
+                const msgPseudo = msg.isSent ? userPseudo : (msg.pseudo || '');
+                if (msgPseudo !== chatSearchUserFilter) return false;
+            }
+            
+            // Filtre par mot-clé
+            if (chatSearchQuery) {
+                const text = (msg.text || '').toLowerCase();
+                if (!text.includes(chatSearchQuery.toLowerCase())) return false;
+            }
+            
+            searchMatchCount++;
+            return true;
+        });
     }
     
-    const textSpan = document.createElement('span');
-    textSpan.className = 'message-text';
-    textSpan.textContent = text;
-    msgDiv.appendChild(textSpan);
-    
-    const timeSpan = document.createElement('span');
-    timeSpan.className = 'timestamp';
-    timeSpan.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    msgDiv.appendChild(timeSpan);
-    
-    containerEl.appendChild(msgDiv);
+    // Mettre à jour le compteur de résultats
+    updateSearchResultsCount(searchMatchCount);
+
+    filteredMessages.forEach(msg => {
+        const msgWrapper = document.createElement('div');
+        msgWrapper.className = `message-wrapper ${msg.isSent ? 'sent' : 'received'}`;
+        msgWrapper.dataset.messageId = msg.id;
+        
+        // Badge épinglé
+        if (pinnedMessageIds.has(msg.id)) {
+            msgWrapper.classList.add('pinned');
+        }
+
+        const msgBubble = document.createElement('div');
+        msgBubble.className = 'message-bubble';
+
+        // Pseudo (pour messages reçus en groupe)
+        if (!msg.isSent && msg.pseudo && participants.size > 1) {
+            const pseudoEl = document.createElement('div');
+            pseudoEl.className = 'message-author';
+            pseudoEl.textContent = msg.pseudo;
+            msgBubble.appendChild(pseudoEl);
+        }
+
+        // Réponse/quote avec style amélioré
+        if (msg.replyToId && !msg.deleted) {
+            const target = findMessageById(msg.replyToId);
+            if (target) {
+                const replyBar = document.createElement('div');
+                replyBar.className = 'message-reply-bar';
+                
+                const replyIcon = document.createElement('span');
+                replyIcon.className = 'reply-icon';
+                replyIcon.textContent = '↩';
+                
+                const replyContent = document.createElement('div');
+                replyContent.className = 'reply-content';
+                
+                const replyAuthor = document.createElement('div');
+                replyAuthor.className = 'reply-author';
+                replyAuthor.textContent = target.pseudo || (target.isSent ? 'Vous' : 'Message');
+                
+                const replyText = document.createElement('div');
+                replyText.className = 'reply-text';
+                const truncated = target.text.slice(0, 60);
+                replyText.textContent = truncated + (target.text.length > 60 ? '…' : '');
+                
+                replyContent.appendChild(replyAuthor);
+                replyContent.appendChild(replyText);
+                replyBar.appendChild(replyIcon);
+                replyBar.appendChild(replyContent);
+                msgBubble.appendChild(replyBar);
+            }
+        }
+
+        // Contenu principal du message
+        const contentEl = document.createElement('div');
+        contentEl.className = 'message-content';
+        
+        if (msg.deleted) {
+            contentEl.classList.add('deleted');
+            contentEl.innerHTML = '<em>🗑️ Message supprimé</em>';
+        } else {
+            // Mettre en surbrillance les termes de recherche
+            if (chatSearchQuery && msg.text) {
+                contentEl.innerHTML = highlightSearchTerm(escapeHtml(msg.text), chatSearchQuery);
+            } else {
+                contentEl.textContent = msg.text;
+            }
+            
+            // Indicateur d'édition discret
+            if (msg.edited) {
+                const editBadge = document.createElement('span');
+                editBadge.className = 'edit-badge';
+                editBadge.textContent = 'modifié';
+                editBadge.title = 'Ce message a été modifié';
+                contentEl.appendChild(editBadge);
+            }
+        }
+        msgBubble.appendChild(contentEl);
+
+        // Réactions (affichées dans la bulle)
+        if (!msg.deleted) {
+            const existingReactions = Object.entries(msg.reactions || {}).filter(([_, users]) => users.length > 0);
+            if (existingReactions.length > 0) {
+                const reactionsContainer = document.createElement('div');
+                reactionsContainer.className = 'message-reactions-row';
+                
+                existingReactions.forEach(([emoji, users]) => {
+                    const reactionBtn = document.createElement('button');
+                    reactionBtn.className = 'reaction-pill';
+                    const hasMyReaction = users.includes(userPseudo);
+                    if (hasMyReaction) reactionBtn.classList.add('my-reaction');
+                    
+                    reactionBtn.innerHTML = `<span class="reaction-emoji">${emoji}</span> <span class="reaction-count">${users.length}</span>`;
+                    reactionBtn.title = users.join(', ');
+                    reactionBtn.onclick = () => toggleQuickReaction(msg.id, emoji);
+                    
+                    reactionsContainer.appendChild(reactionBtn);
+                });
+                
+                // Bouton + pour ajouter une nouvelle réaction
+                const addReactionBtn = document.createElement('button');
+                addReactionBtn.className = 'reaction-pill add-reaction';
+                addReactionBtn.innerHTML = '➕';
+                addReactionBtn.title = 'Ajouter une réaction';
+                addReactionBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    toggleReactionPicker(msg.id, msgWrapper);
+                };
+                reactionsContainer.appendChild(addReactionBtn);
+                
+                msgBubble.appendChild(reactionsContainer);
+            }
+        }
+
+        // Footer avec timestamp
+        const footer = document.createElement('div');
+        footer.className = 'message-meta';
+        
+        const timeEl = document.createElement('span');
+        timeEl.className = 'message-time';
+        timeEl.textContent = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        footer.appendChild(timeEl);
+        
+        msgBubble.appendChild(footer);
+        msgWrapper.appendChild(msgBubble);
+
+        // Menu d'actions (visible au hover)
+        if (!msg.deleted) {
+            const actionsMenu = document.createElement('div');
+            actionsMenu.className = 'message-actions-menu';
+
+            // Bouton réaction (ouvre le picker)
+            const reactionBtn = document.createElement('button');
+            reactionBtn.className = 'action-btn reaction-btn';
+            reactionBtn.innerHTML = '➕';
+            reactionBtn.title = 'Ajouter une réaction';
+            reactionBtn.onclick = (e) => {
+                e.stopPropagation();
+                toggleReactionPicker(msg.id, msgWrapper);
+            };
+            actionsMenu.appendChild(reactionBtn);
+
+            // Bouton répondre
+            const replyBtn = document.createElement('button');
+            replyBtn.className = 'action-btn reply-btn';
+            replyBtn.innerHTML = '↩';
+            replyBtn.title = 'Répondre';
+            replyBtn.onclick = () => setReplyPreview(msg.id, isReceiver);
+            actionsMenu.appendChild(replyBtn);
+            
+            // Bouton épingler
+            const pinBtn = document.createElement('button');
+            pinBtn.className = 'action-btn pin-btn';
+            pinBtn.innerHTML = pinnedMessageIds.has(msg.id) ? '📌' : '📍';
+            pinBtn.title = pinnedMessageIds.has(msg.id) ? 'Désépingler' : 'Épingler';
+            pinBtn.onclick = () => togglePinMessage(msg.id);
+            actionsMenu.appendChild(pinBtn);
+
+            // Boutons éditer/supprimer (uniquement pour mes messages)
+            if (msg.isSent) {
+                const editBtn = document.createElement('button');
+                editBtn.className = 'action-btn edit-btn';
+                editBtn.innerHTML = '✏️';
+                editBtn.title = 'Modifier';
+                editBtn.onclick = () => startEditingMessage(msg.id);
+                actionsMenu.appendChild(editBtn);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'action-btn delete-btn';
+                deleteBtn.innerHTML = '🗑️';
+                deleteBtn.title = 'Supprimer';
+                deleteBtn.onclick = () => {
+                    if (confirm('Supprimer ce message ?')) {
+                        deleteMessage(msg.id);
+                    }
+                };
+                actionsMenu.appendChild(deleteBtn);
+            }
+
+            msgWrapper.appendChild(actionsMenu);
+        }
+
+        containerEl.appendChild(msgWrapper);
+    });
+
     containerEl.scrollTop = containerEl.scrollHeight;
+}
+
+function toggleQuickReaction(messageId, emoji) {
+    const msg = findMessageById(messageId);
+    if (!msg || msg.deleted) return;
+    const users = msg.reactions?.[emoji] || [];
+    const already = users.includes(userPseudo);
+    const updated = already ? users.filter(u => u !== userPseudo) : [...users, userPseudo];
+    msg.reactions = { ...msg.reactions, [emoji]: updated };
+
+    broadcastToAllPeers({
+        type: 'chat-reaction',
+        messageId,
+        emoji,
+        pseudo: userPseudo,
+        action: already ? 'remove' : 'add'
+    });
+
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
+    renderChatMessages(container);
+}
+
+function toggleReactionPicker(messageId, msgWrapper) {
+    // Fermer tout picker ouvert
+    document.querySelectorAll('.reaction-picker-popup').forEach(p => p.remove());
     
-    // Stocker le message
-    chatMessages.push({ text, isSent, pseudo, timestamp: Date.now() });
+    const reactionList = ['👍', '❤️', '😂', '😮', '😢', '👏', '🔥', '🎉'];
+    
+    const picker = document.createElement('div');
+    picker.className = 'reaction-picker-popup';
+    
+    reactionList.forEach(emoji => {
+        const btn = document.createElement('button');
+        btn.className = 'reaction-option';
+        btn.textContent = emoji;
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            toggleQuickReaction(messageId, emoji);
+            picker.remove();
+        };
+        picker.appendChild(btn);
+    });
+    
+    // Ajouter au body pour éviter les problèmes de débordement
+    document.body.appendChild(picker);
+    
+    // Positionner le picker près du message
+    const wrapperRect = msgWrapper.getBoundingClientRect();
+    const pickerWidth = 280; // Largeur approximative du picker
+    const pickerHeight = 50; // Hauteur approximative
+    
+    // Position horizontale: centré par rapport au message
+    let left = wrapperRect.left + (wrapperRect.width / 2) - (pickerWidth / 2);
+    
+    // Vérifier les limites horizontales
+    if (left < 10) left = 10;
+    if (left + pickerWidth > window.innerWidth - 10) {
+        left = window.innerWidth - pickerWidth - 10;
+    }
+    
+    // Position verticale: au-dessus du message si possible, sinon en-dessous
+    let top = wrapperRect.top - pickerHeight - 10;
+    if (top < 10) {
+        top = wrapperRect.bottom + 10;
+    }
+    
+    picker.style.position = 'fixed';
+    picker.style.left = left + 'px';
+    picker.style.top = top + 'px';
+    picker.style.zIndex = '10000';
+    
+    // Fermer au clic extérieur
+    setTimeout(() => {
+        document.addEventListener('click', function closePickerOnce(e) {
+            if (!picker.contains(e.target)) {
+                picker.remove();
+            }
+            document.removeEventListener('click', closePickerOnce);
+        });
+    }, 10);
+}
+
+function startEditingMessage(messageId) {
+    const msg = findMessageById(messageId);
+    if (!msg || !msg.isSent || msg.deleted) return;
+    
+    editingMessageId = messageId;
+    replyToMessageId = null;
+    
+    const { inputEl } = getActiveChatElements(isReceiver);
+    if (!inputEl) return;
+    
+    inputEl.value = msg.text;
+    inputEl.focus();
+    inputEl.setSelectionRange(msg.text.length, msg.text.length);
+    
+    // Ajouter un indicateur visuel d'édition
+    const editingIndicator = document.createElement('div');
+    editingIndicator.className = 'editing-indicator';
+    editingIndicator.innerHTML = `
+        <span>✏️ Modification du message</span>
+        <button class="cancel-edit-btn" onclick="cancelEditing()">Annuler</button>
+    `;
+    
+    const inputContainer = inputEl.parentElement;
+    const existingIndicator = inputContainer.querySelector('.editing-indicator');
+    if (existingIndicator) existingIndicator.remove();
+    
+    inputContainer.insertBefore(editingIndicator, inputEl);
+}
+
+function cancelEditing() {
+    editingMessageId = null;
+    const { inputEl } = getActiveChatElements(isReceiver);
+    if (inputEl) {
+        inputEl.value = '';
+        inputEl.placeholder = 'Votre message...';
+    }
+    
+    document.querySelectorAll('.editing-indicator').forEach(ind => ind.remove());
+}
+
+function deleteMessage(messageId) {
+    const msg = findMessageById(messageId);
+    if (!msg || !msg.isSent) return;
+    msg.deleted = true;
+    broadcastToAllPeers({
+        type: 'chat-delete',
+        messageId,
+        pseudo: userPseudo
+    });
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
+    renderChatMessages(container);
+}
+
+function sendTypingSignal(isReceiverSide) {
+    const hasConnectedPeer = Array.from(peers.values()).some(p => p.connected);
+    if (!hasConnectedPeer) return;
+    broadcastToAllPeers({ type: 'chat-typing', pseudo: userPseudo, timestamp: Date.now() });
+    clearTimeout(typingSignalTimeout);
+    typingSignalTimeout = setTimeout(() => {
+        broadcastToAllPeers({ type: 'chat-typing', pseudo: userPseudo, stop: true, timestamp: Date.now() });
+    }, 2000);
+}
+
+function handleTypingSignal(data, fromOdId) {
+    if (data.stop) {
+        updateChatStatus(true);
+        return;
+    }
+    const pseudo = data.pseudo || participants.get(fromOdId)?.pseudo || 'Quelqu\'un';
+    const { statusEl } = getActiveChatElements(isReceiver);
+    if (!statusEl) return;
+    statusEl.textContent = `${pseudo} écrit...`;
+    statusEl.classList.add('typing');
+    clearTimeout(typingIndicatorTimer);
+    typingIndicatorTimer = setTimeout(() => updateChatStatus(true), 2500);
+}
+
+async function handleChatEdit(data, fromOdId) {
+    try {
+        const iv = fromBase64(data.iv);
+        const ciphertext = fromBase64(data.ciphertext);
+        const decrypted = await window.crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv },
+            cryptoKey,
+            ciphertext
+        );
+        const text = new TextDecoder().decode(decrypted);
+        const msg = findMessageById(data.messageId);
+        if (msg) {
+            msg.text = text;
+            msg.edited = true;
+            msg.deleted = false;
+        }
+        const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
+        renderChatMessages(container);
+    } catch (err) {
+        console.error('❌ Erreur handleChatEdit:', err);
+    }
+}
+
+function handleChatDelete(data) {
+    const msg = findMessageById(data.messageId);
+    if (msg) {
+        msg.deleted = true;
+        const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
+        renderChatMessages(container);
+    }
+}
+
+function handleChatReaction(data) {
+    const msg = findMessageById(data.messageId);
+    if (!msg || msg.deleted) return;
+    const list = msg.reactions?.[data.emoji] || [];
+    const exists = list.includes(data.pseudo);
+    let updated = list;
+    if (data.action === 'add' && !exists) {
+        updated = [...list, data.pseudo];
+    } else if (data.action === 'remove' && exists) {
+        updated = list.filter(u => u !== data.pseudo);
+    }
+    msg.reactions = { ...msg.reactions, [data.emoji]: updated };
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
+    renderChatMessages(container);
 }
 
 function updateChatStatus(connected) {
@@ -3166,8 +3954,645 @@ function updateChatStatus(connected) {
         if (el) {
             el.textContent = connected ? `Connecté (${connectedPeers + 1} participants)` : 'En attente...';
             el.classList.toggle('connected', connected);
+            el.classList.remove('typing');
         }
     });
+}
+
+// ===== RECHERCHE DANS LE CHAT =====
+
+function setupChatSearch() {
+    // Créateur
+    const searchToggle = document.getElementById('chat-search-toggle');
+    const searchBar = document.getElementById('chat-search-bar');
+    const searchInput = document.getElementById('chat-search-input');
+    const searchUserFilter = document.getElementById('chat-search-user-filter');
+    const searchClear = document.getElementById('chat-search-clear');
+    
+    if (searchToggle && searchBar) {
+        searchToggle.addEventListener('click', () => {
+            searchBar.classList.toggle('hidden');
+            if (!searchBar.classList.contains('hidden')) {
+                searchInput?.focus();
+                updateSearchUserFilter(false);
+            }
+        });
+    }
+    
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            chatSearchQuery = e.target.value;
+            renderChatMessages(elements.chatMessages);
+        });
+    }
+    
+    if (searchUserFilter) {
+        searchUserFilter.addEventListener('change', (e) => {
+            chatSearchUserFilter = e.target.value;
+            renderChatMessages(elements.chatMessages);
+        });
+    }
+    
+    if (searchClear) {
+        searchClear.addEventListener('click', () => {
+            clearChatSearch(false);
+        });
+    }
+    
+    // Receiver
+    const rSearchToggle = document.getElementById('receiver-chat-search-toggle');
+    const rSearchBar = document.getElementById('receiver-chat-search-bar');
+    const rSearchInput = document.getElementById('receiver-chat-search-input');
+    const rSearchUserFilter = document.getElementById('receiver-chat-search-user-filter');
+    const rSearchClear = document.getElementById('receiver-chat-search-clear');
+    
+    if (rSearchToggle && rSearchBar) {
+        rSearchToggle.addEventListener('click', () => {
+            rSearchBar.classList.toggle('hidden');
+            if (!rSearchBar.classList.contains('hidden')) {
+                rSearchInput?.focus();
+                updateSearchUserFilter(true);
+            }
+        });
+    }
+    
+    if (rSearchInput) {
+        rSearchInput.addEventListener('input', (e) => {
+            chatSearchQuery = e.target.value;
+            renderChatMessages(elements.receiverChatMessages);
+        });
+    }
+    
+    if (rSearchUserFilter) {
+        rSearchUserFilter.addEventListener('change', (e) => {
+            chatSearchUserFilter = e.target.value;
+            renderChatMessages(elements.receiverChatMessages);
+        });
+    }
+    
+    if (rSearchClear) {
+        rSearchClear.addEventListener('click', () => {
+            clearChatSearch(true);
+        });
+    }
+}
+
+function updateSearchUserFilter(isReceiverSide) {
+    const selectEl = isReceiverSide 
+        ? document.getElementById('receiver-chat-search-user-filter')
+        : document.getElementById('chat-search-user-filter');
+    
+    if (!selectEl) return;
+    
+    // Garder l'option "Tous"
+    selectEl.innerHTML = '<option value="">Tous les utilisateurs</option>';
+    
+    // Ajouter l'utilisateur courant
+    const optionMe = document.createElement('option');
+    optionMe.value = userPseudo;
+    optionMe.textContent = userPseudo + ' (vous)';
+    selectEl.appendChild(optionMe);
+    
+    // Ajouter les autres participants
+    participants.forEach((info, odId) => {
+        const opt = document.createElement('option');
+        opt.value = info.pseudo;
+        opt.textContent = info.pseudo;
+        selectEl.appendChild(opt);
+    });
+}
+
+function clearChatSearch(isReceiverSide) {
+    chatSearchQuery = '';
+    chatSearchUserFilter = '';
+    
+    const searchInput = isReceiverSide 
+        ? document.getElementById('receiver-chat-search-input')
+        : document.getElementById('chat-search-input');
+    const userFilter = isReceiverSide 
+        ? document.getElementById('receiver-chat-search-user-filter')
+        : document.getElementById('chat-search-user-filter');
+    const searchBar = isReceiverSide 
+        ? document.getElementById('receiver-chat-search-bar')
+        : document.getElementById('chat-search-bar');
+    
+    if (searchInput) searchInput.value = '';
+    if (userFilter) userFilter.value = '';
+    if (searchBar) searchBar.classList.add('hidden');
+    
+    const container = isReceiverSide ? elements.receiverChatMessages : elements.chatMessages;
+    renderChatMessages(container);
+}
+
+function updateSearchResultsCount(count) {
+    const countEl = isReceiver 
+        ? document.getElementById('receiver-chat-search-count')
+        : document.getElementById('chat-search-count');
+    
+    if (countEl) {
+        if (chatSearchQuery || chatSearchUserFilter) {
+            countEl.textContent = `${count} résultat(s)`;
+            countEl.classList.remove('hidden');
+        } else {
+            countEl.textContent = '';
+            countEl.classList.add('hidden');
+        }
+    }
+}
+
+function highlightSearchTerm(text, query) {
+    if (!query) return text;
+    const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
+    return text.replace(regex, '<mark class="search-highlight">$1</mark>');
+}
+
+function escapeRegex(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ===== MESSAGES ÉPINGLÉS =====
+
+function setupPinnedMessages() {
+    // Créateur
+    const pinsToggle = document.getElementById('chat-pins-toggle');
+    if (pinsToggle) {
+        pinsToggle.addEventListener('click', () => showPinnedModal(false));
+    }
+    
+    // Receiver
+    const rPinsToggle = document.getElementById('receiver-chat-pins-toggle');
+    if (rPinsToggle) {
+        rPinsToggle.addEventListener('click', () => showPinnedModal(true));
+    }
+}
+
+function togglePinMessage(messageId) {
+    if (pinnedMessageIds.has(messageId)) {
+        pinnedMessageIds.delete(messageId);
+        showToast('Message désépinglé');
+    } else {
+        pinnedMessageIds.add(messageId);
+        showToast('📌 Message épinglé');
+    }
+    
+    // Synchroniser avec les autres participants
+    broadcastToAllPeers({
+        type: 'chat-pin',
+        messageId,
+        action: pinnedMessageIds.has(messageId) ? 'pin' : 'unpin'
+    });
+    
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
+    renderChatMessages(container);
+    renderPinnedMessages(isReceiver);
+}
+
+function handleChatPin(data) {
+    if (data.action === 'pin') {
+        pinnedMessageIds.add(data.messageId);
+    } else {
+        pinnedMessageIds.delete(data.messageId);
+    }
+    
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
+    renderChatMessages(container);
+    renderPinnedMessages(isReceiver);
+}
+
+function renderPinnedMessages(isReceiverSide) {
+    const listEl = isReceiverSide 
+        ? document.getElementById('receiver-chat-pinned-list')
+        : document.getElementById('chat-pinned-list');
+    
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    
+    if (pinnedMessageIds.size === 0) {
+        listEl.innerHTML = '<p class="no-pins">Aucun message épinglé</p>';
+        return;
+    }
+    
+    pinnedMessageIds.forEach(msgId => {
+        const msg = findMessageById(msgId);
+        if (!msg || msg.deleted) return;
+        
+        const pinnedItem = document.createElement('div');
+        pinnedItem.className = 'pinned-message-item';
+        pinnedItem.onclick = () => scrollToMessage(msgId);
+        
+        const author = document.createElement('span');
+        author.className = 'pinned-author';
+        author.textContent = msg.isSent ? 'Vous' : (msg.pseudo || 'Anonyme');
+        
+        const text = document.createElement('span');
+        text.className = 'pinned-text';
+        text.textContent = msg.text.slice(0, 50) + (msg.text.length > 50 ? '…' : '');
+        
+        const unpinBtn = document.createElement('button');
+        unpinBtn.className = 'unpin-btn';
+        unpinBtn.innerHTML = '✕';
+        unpinBtn.title = 'Désépingler';
+        unpinBtn.onclick = (e) => {
+            e.stopPropagation();
+            togglePinMessage(msgId);
+        };
+        
+        pinnedItem.appendChild(author);
+        pinnedItem.appendChild(text);
+        pinnedItem.appendChild(unpinBtn);
+        listEl.appendChild(pinnedItem);
+    });
+}
+
+function scrollToMessage(messageId) {
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
+    if (!container) return;
+    
+    const msgEl = container.querySelector(`[data-message-id="${messageId}"]`);
+    if (msgEl) {
+        msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        msgEl.classList.add('highlight-flash');
+        setTimeout(() => msgEl.classList.remove('highlight-flash'), 2000);
+    }
+}
+
+// ===== EXPORT DE CONVERSATION =====
+
+function openChatModal(innerHtml) {
+    const existing = document.querySelector('.chat-modal');
+    if (existing) existing.remove();
+    ensureChatModalStyles();
+    const overlay = document.createElement('div');
+    overlay.className = 'chat-modal export-popup';
+    overlay.innerHTML = innerHtml;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+    overlay.querySelector('.modal-close')?.addEventListener('click', () => overlay.remove());
+    return overlay;
+}
+
+function ensureChatModalStyles() {
+    if (document.getElementById('chat-modal-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'chat-modal-styles';
+    style.textContent = `
+    .chat-modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10000; background: rgba(0,0,0,0.5); padding: 12px; -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+    .modal-card { max-width: 560px; width: min(560px, 94vw); background: var(--bg, #fff); border-radius: 18px; box-shadow: 0 20px 50px rgba(0,0,0,0.3); padding: 24px; position: relative; }
+    .modal-header { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+    .modal-icon { width: 42px; height: 42px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; background: rgba(0,102,255,0.12); font-size: 1.2rem; }
+    .modal-close { position: absolute; top: 12px; right: 12px; background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: #666; padding: 6px; border-radius: 8px; }
+    .modal-close:hover { background: rgba(0,0,0,0.06); }
+    .export-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0 18px; }
+    .option-card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; text-align: left; background: #fff; cursor: pointer; transition: all 0.2s ease; }
+    .option-card:hover { border-color: #0066ff; box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+    .option-title { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+    .option-desc { margin: 6px 0 4px; color: #555; }
+    .option-meta { font-size: 0.85rem; color: #777; }
+    .modal-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .pinned-modal-list { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin: 8px 0 14px; }
+    .pinned-modal-item { border: 1px solid #ddd; border-radius: 10px; padding: 10px 12px; background: #f7f7f8; cursor: pointer; transition: all 0.2s ease; }
+    .pinned-modal-item:hover { border-color: #0066ff; box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+    .pinned-meta { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 6px; color: #666; }
+    .pinned-text { font-size: 0.95rem; color: #222; }
+    .modal-note { font-size: 0.85rem; color: #666; }
+    `;
+    document.head.appendChild(style);
+}
+
+function setupChatExport() {
+    // Créateur
+    const exportBtn = document.getElementById('chat-export-btn');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', () => showExportDialog());
+    }
+    
+    // Receiver
+    const rExportBtn = document.getElementById('receiver-chat-export-btn');
+    if (rExportBtn) {
+        rExportBtn.addEventListener('click', () => showExportDialog());
+    }
+}
+
+function showExportDialog() {
+    const popup = openChatModal(`
+        <div class="export-content modal-card">
+            <button class="modal-close" aria-label="Fermer">×</button>
+            <div class="modal-header">
+                <div class="modal-icon">📥</div>
+                <div>
+                    <h3>Exporter la conversation</h3>
+                    <p class="modal-subtitle">Fichier local, rien n'est envoyé au serveur.</p>
+                </div>
+            </div>
+            <div class="export-grid">
+                <button class="option-card export-txt-btn">
+                    <div class="option-icon">📄</div>
+                    <div class="option-title">Texte (.txt) <span class="option-badge">Rapide</span></div>
+                    <div class="option-desc">Brut et léger, lisible partout.</div>
+                    <div class="option-meta">Idéal pour archiver</div>
+                </button>
+                <button class="option-card export-html-btn">
+                    <div class="option-icon">🌐</div>
+                    <div class="option-title">HTML stylé</div>
+                    <div class="option-desc">Mise en page avec couleurs et badges.</div>
+                    <div class="option-meta">Idéal pour imprimer</div>
+                </button>
+            </div>
+            <div class="modal-footer">
+                <span class="modal-note">⚠️ Les autres participants seront notifiés.</span>
+                <button class="btn btn-secondary export-cancel-btn">Annuler</button>
+            </div>
+        </div>
+    `);
+    
+    popup.querySelector('.export-txt-btn').addEventListener('click', () => {
+        exportChatAsTxt();
+        popup.remove();
+    });
+    
+    popup.querySelector('.export-html-btn').addEventListener('click', () => {
+        exportChatAsHtml();
+        popup.remove();
+    });
+    
+    popup.querySelector('.export-cancel-btn').addEventListener('click', () => popup.remove());
+}
+
+function exportChatAsTxt() {
+    // Notifier les autres participants
+    broadcastToAllPeers({
+        type: 'chat-export-notify',
+        pseudo: userPseudo,
+        format: 'TXT'
+    });
+    
+    let content = `SecurePeer - Export de conversation\n`;
+    content += `Date: ${new Date().toLocaleString()}\n`;
+    content += `Session: ${roomId}\n`;
+    content += `Mode: ${sessionMode}\n`;
+    content += `${'='.repeat(50)}\n\n`;
+    
+    chatMessages.forEach(msg => {
+        if (msg.deleted) return;
+        
+        const time = new Date(msg.timestamp).toLocaleString();
+        const author = msg.isSent ? userPseudo : (msg.pseudo || 'Anonyme');
+        const edited = msg.edited ? ' (modifié)' : '';
+        const pinned = pinnedMessageIds.has(msg.id) ? ' 📌' : '';
+        
+        content += `[${time}] ${author}${edited}${pinned}:\n`;
+        content += `${msg.text}\n\n`;
+    });
+    
+    content += `${'='.repeat(50)}\n`;
+    content += `Total: ${chatMessages.filter(m => !m.deleted).length} messages\n`;
+    
+    downloadFile(content, `securepeer-chat-${roomId}.txt`, 'text/plain');
+    showToast('✅ Conversation exportée en TXT');
+}
+
+function exportChatAsHtml() {
+    // Notifier les autres participants
+    broadcastToAllPeers({
+        type: 'chat-export-notify',
+        pseudo: userPseudo,
+        format: 'HTML'
+    });
+    
+    let html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecurePeer - Export de conversation</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        .header { background: #0066ff; color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+        .header h1 { margin: 0 0 10px 0; }
+        .header p { margin: 5px 0; opacity: 0.9; }
+        .message { background: white; padding: 12px 16px; margin: 8px 0; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .message.sent { background: #0066ff; color: white; margin-left: 20%; }
+        .message.received { margin-right: 20%; }
+        .message.pinned { border-left: 3px solid #f59e0b; }
+        .meta { font-size: 0.8em; opacity: 0.7; margin-bottom: 4px; }
+        .text { line-height: 1.5; }
+        .badge { font-size: 0.75em; background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
+        .footer { text-align: center; color: #666; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔒 SecurePeer</h1>
+        <p>Export de conversation</p>
+        <p>Date: ${new Date().toLocaleString()}</p>
+        <p>Session: ${roomId} | Mode: ${sessionMode}</p>
+    </div>
+    <div class="messages">`;
+    
+    chatMessages.forEach(msg => {
+        if (msg.deleted) return;
+        
+        const time = new Date(msg.timestamp).toLocaleString();
+        const author = msg.isSent ? userPseudo : (msg.pseudo || 'Anonyme');
+        const edited = msg.edited ? '<span class="badge">modifié</span>' : '';
+        const pinned = pinnedMessageIds.has(msg.id) ? ' pinned' : '';
+        const pinnedBadge = pinnedMessageIds.has(msg.id) ? '<span class="badge">📌</span>' : '';
+        
+        html += `
+        <div class="message ${msg.isSent ? 'sent' : 'received'}${pinned}">
+            <div class="meta">${escapeHtml(author)} - ${time}${edited}${pinnedBadge}</div>
+            <div class="text">${escapeHtml(msg.text)}</div>
+        </div>`;
+    });
+    
+    html += `
+    </div>
+    <div class="footer">
+        <p>Total: ${chatMessages.filter(m => !m.deleted).length} messages</p>
+        <p>Exporté depuis SecurePeer - Chiffrement E2E</p>
+    </div>
+</body>
+</html>`;
+    
+    downloadFile(html, `securepeer-chat-${roomId}.html`, 'text/html');
+    showToast('✅ Conversation exportée en HTML');
+}
+
+function downloadFile(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// ===== NOTIFICATION D'EXPORT =====
+
+function handleExportNotify(data) {
+    showToast(`📥 ${data.pseudo} a exporté la conversation (${data.format})`, 5000);
+}
+
+// ===== MESSAGES ÉPHÉMÈRES =====
+
+function setupEphemeralMessages() {
+    // Créateur
+    const ephemeralToggle = document.getElementById('chat-ephemeral-toggle');
+    if (ephemeralToggle) {
+        ephemeralToggle.addEventListener('click', () => showEphemeralDialog());
+        updateEphemeralButton(ephemeralToggle);
+    }
+    
+    // Receiver
+    const rEphemeralToggle = document.getElementById('receiver-chat-ephemeral-toggle');
+    if (rEphemeralToggle) {
+        rEphemeralToggle.addEventListener('click', () => showEphemeralDialog());
+        updateEphemeralButton(rEphemeralToggle);
+    }
+}
+
+function updateEphemeralButton(btn) {
+    if (!btn) return;
+    btn.classList.toggle('active', ephemeralMode);
+    btn.title = ephemeralMode 
+        ? `Messages éphémères: ${ephemeralDuration}s` 
+        : 'Messages éphémères (désactivé)';
+}
+
+function showEphemeralDialog() {
+    const popup = openChatModal(`
+        <div class="export-content modal-card">
+            <button class="modal-close" aria-label="Fermer">×</button>
+            <div class="modal-header">
+                <div class="modal-icon">⏱️</div>
+                <div>
+                    <h3>Messages éphémères</h3>
+                    <p class="modal-subtitle">Suppression automatique après le délai choisi.</p>
+                </div>
+            </div>
+            <div class="ephemeral-body">
+                <label class="toggle-row">
+                    <span>Activer</span>
+                    <input type="checkbox" id="ephemeral-enabled" ${ephemeralMode ? 'checked' : ''}>
+                </label>
+                <div class="ephemeral-duration-row">
+                    <label for="ephemeral-duration-select">Durée</label>
+                    <select id="ephemeral-duration-select">
+                        <option value="10" ${ephemeralDuration === 10 ? 'selected' : ''}>10 secondes</option>
+                        <option value="30" ${ephemeralDuration === 30 ? 'selected' : ''}>30 secondes</option>
+                        <option value="60" ${ephemeralDuration === 60 ? 'selected' : ''}>1 minute</option>
+                        <option value="300" ${ephemeralDuration === 300 ? 'selected' : ''}>5 minutes</option>
+                        <option value="600" ${ephemeralDuration === 600 ? 'selected' : ''}>10 minutes</option>
+                    </select>
+                </div>
+                <p class="modal-note">⚠️ Synchronisé avec tous les participants.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary ephemeral-cancel-btn">Annuler</button>
+                <button class="btn btn-primary ephemeral-save-btn">Appliquer</button>
+            </div>
+        </div>
+    `);
+    
+    popup.querySelector('.ephemeral-save-btn').addEventListener('click', () => {
+        const enabled = popup.querySelector('#ephemeral-enabled').checked;
+        const duration = parseInt(popup.querySelector('#ephemeral-duration-select').value);
+        
+        ephemeralMode = enabled;
+        ephemeralDuration = duration;
+        
+        // Synchroniser avec les autres
+        broadcastToAllPeers({
+            type: 'chat-ephemeral-sync',
+            enabled: ephemeralMode,
+            duration: ephemeralDuration,
+            pseudo: userPseudo
+        });
+        
+        updateAllEphemeralButtons();
+        showToast(ephemeralMode 
+            ? `⏱️ Messages éphémères: ${ephemeralDuration}s` 
+            : '⏱️ Messages éphémères désactivés');
+        popup.remove();
+    });
+    
+    popup.querySelector('.ephemeral-cancel-btn').addEventListener('click', () => popup.remove());
+}
+
+function showPinnedModal(isReceiverSide) {
+    const items = [];
+    pinnedMessageIds.forEach(id => {
+        const msg = findMessageById(id);
+        if (!msg || msg.deleted) return;
+        const author = msg.isSent ? 'Vous' : (msg.pseudo || 'Anonyme');
+        const preview = msg.text.slice(0, 120) + (msg.text.length > 120 ? '…' : '');
+        items.push(`
+            <div class="pinned-modal-item" data-id="${id}">
+                <div class="pinned-meta">
+                    <span class="pinned-author">${escapeHtml(author)}</span>
+                    <span class="pinned-time">${new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <div class="pinned-text">${escapeHtml(preview)}</div>
+            </div>
+        `);
+    });
+    const listHtml = items.length ? items.join('') : '<div class="no-pins">Aucun message épinglé</div>';
+    const popup = openChatModal(`
+        <div class="export-content modal-card">
+            <button class="modal-close" aria-label="Fermer">×</button>
+            <div class="modal-header">
+                <div class="modal-icon">📌</div>
+                <div>
+                    <h3>Messages épinglés</h3>
+                    <p class="modal-subtitle">Clique pour naviguer dans la conversation.</p>
+                </div>
+            </div>
+            <div class="pinned-modal-list">${listHtml}</div>
+            <div class="modal-footer">
+                <span class="modal-note">Synchronisé entre tous les participants.</span>
+                <button class="btn btn-secondary export-cancel-btn">Fermer</button>
+            </div>
+        </div>
+    `);
+    popup.querySelectorAll('.pinned-modal-item').forEach(el => {
+        el.addEventListener('click', () => {
+            const id = el.getAttribute('data-id');
+            scrollToMessage(id);
+            popup.remove();
+        });
+    });
+    popup.querySelector('.export-cancel-btn')?.addEventListener('click', () => popup.remove());
+}
+
+function handleEphemeralSync(data) {
+    ephemeralMode = data.enabled;
+    ephemeralDuration = data.duration;
+    updateAllEphemeralButtons();
+    showToast(data.enabled 
+        ? `⏱️ ${data.pseudo} a activé les messages éphémères (${data.duration}s)`
+        : `⏱️ ${data.pseudo} a désactivé les messages éphémères`);
+}
+
+function updateAllEphemeralButtons() {
+    updateEphemeralButton(document.getElementById('chat-ephemeral-toggle'));
+    updateEphemeralButton(document.getElementById('receiver-chat-ephemeral-toggle'));
+}
+
+function scheduleMessageDeletion(messageId, delay) {
+    if (!ephemeralMode) return;
+    
+    setTimeout(() => {
+        const msg = findMessageById(messageId);
+        if (msg && !msg.deleted) {
+            msg.deleted = true;
+            msg.text = '💨 Message éphémère expiré';
+            const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
+            renderChatMessages(container);
+        }
+    }, delay * 1000);
 }
 
 // ===== MODE BOTH - FICHIERS BIDIRECTIONNELS =====

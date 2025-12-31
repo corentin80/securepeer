@@ -163,6 +163,50 @@
                 <label for="password-input">🔐 Protection par mot de passe (optionnel)</label>
                 <input type="password" id="password-input" placeholder="Entrez un mot de passe pour plus de sécurité">
                 <p class="hint">Le mot de passe ne quitte jamais votre appareil</p>
+                
+                <!-- Options de sécurité avancées -->
+                <div class="security-options">
+                    <h4>⚙️ Options de sécurité</h4>
+                    
+                    <div class="option-group">
+                        <label for="session-expiration">⏱️ Expiration de la session</label>
+                        <select id="session-expiration">
+                            <option value="0">Illimité</option>
+                            <option value="15">15 minutes</option>
+                            <option value="60">1 heure</option>
+                            <option value="1440">24 heures</option>
+                            <option value="10080">7 jours</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="max-participants">👥 Limite de participants</label>
+                        <select id="max-participants">
+                            <option value="1">1 (privé)</option>
+                            <option value="2">2</option>
+                            <option value="5">5</option>
+                            <option value="10">10</option>
+                            <option value="20" selected>20 (max)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group option-toggle">
+                        <label for="require-approval">
+                            <input type="checkbox" id="require-approval">
+                            ✋ Approbation des participants
+                        </label>
+                        <p class="hint">Vous devrez accepter chaque nouveau membre</p>
+                    </div>
+                    
+                    <div class="option-group option-toggle">
+                        <label for="auto-lock">
+                            <input type="checkbox" id="auto-lock">
+                            🔒 Verrouillage automatique
+                        </label>
+                        <p class="hint">Verrouiller la session dès qu'un participant rejoint</p>
+                    </div>
+                </div>
+                
                 <button id="send-file-btn" class="btn btn-primary btn-large">📤 Envoyer le fichier</button>
             </div>
 
@@ -187,13 +231,17 @@
                 
                 <!-- Dropdown pour les pseudos connectés -->
                 <div class="connected-users-section hidden" id="connected-users-section">
-                    <label for="connected-users-dropdown">�</label>
+                    <label for="connected-users-dropdown">👥</label>
                     <select id="connected-users-dropdown" class="connected-users-dropdown">
                         <option disabled selected>Connectés</option>
                     </select>
                 </div>
                 
-                <button id="close-session" class="btn btn-primary" style="margin-top: 15px;">🚪 Fermer la session</button>
+                <!-- Contrôles de session -->
+                <div class="session-controls" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button id="lock-session-btn" class="btn btn-secondary lock-session-btn" title="Bloquer les nouveaux participants">🔒 Verrouiller</button>
+                    <button id="close-session" class="btn btn-primary">🚪 Fermer</button>
+                </div>
             </div>
 
             <!-- Zone de Chat (visible si mode chat ou both) -->
@@ -201,6 +249,26 @@
                 <div class="chat-header">
                     <h3>💬 Chat sécurisé</h3>
                     <span class="chat-status" id="chat-status">En attente...</span>
+                    <div class="chat-tools">
+                        <button class="chat-tool-btn" id="chat-search-toggle" title="Rechercher">🔍</button>
+                        <button class="chat-tool-btn" id="chat-pins-toggle" title="Messages épinglés">📌</button>
+                        <button class="chat-tool-btn" id="chat-export-btn" title="Exporter la conversation">📥</button>
+                        <button class="chat-tool-btn" id="chat-ephemeral-toggle" title="Messages éphémères">⏱️</button>
+                    </div>
+                </div>
+                <!-- Barre de recherche -->
+                <div class="chat-search-bar hidden" id="chat-search-bar">
+                    <input type="text" id="chat-search-input" placeholder="Rechercher un message...">
+                    <select id="chat-search-user-filter">
+                        <option value="">Tous les utilisateurs</option>
+                    </select>
+                    <button class="btn btn-small" id="chat-search-clear">✕</button>
+                    <span class="search-results-count" id="chat-search-count"></span>
+                </div>
+                <!-- Messages épinglés -->
+                <div class="chat-pinned-section hidden" id="chat-pinned-section">
+                    <div class="pinned-header">📌 Messages épinglés</div>
+                    <div class="pinned-messages-list" id="chat-pinned-list"></div>
                 </div>
                 <div class="chat-messages" id="chat-messages">
                     <!-- Messages dynamiques -->
@@ -256,6 +324,12 @@
                 <div class="chat-header">
                     <h3>💬 Chat sécurisé</h3>
                     <span class="chat-status" id="receiver-chat-status">Connecté</span>
+                    <div class="chat-tools">
+                        <button class="chat-tool-btn" id="receiver-chat-search-toggle" title="Rechercher">🔍</button>
+                        <button class="chat-tool-btn" id="receiver-chat-pins-toggle" title="Messages épinglés">📌</button>
+                        <button class="chat-tool-btn" id="receiver-chat-export-btn" title="Exporter la conversation">📥</button>
+                        <button class="chat-tool-btn" id="receiver-chat-ephemeral-toggle" title="Messages éphémères">⏱️</button>
+                    </div>
                     <!-- Dropdown pour les pseudos connectés (receiver) - dans le header -->
                     <div class="connected-users-section hidden" id="receiver-connected-users-section">
                         <label for="receiver-connected-users-dropdown">👥</label>
@@ -263,6 +337,20 @@
                             <option disabled selected>Connectés</option>
                         </select>
                     </div>
+                </div>
+                <!-- Barre de recherche -->
+                <div class="chat-search-bar hidden" id="receiver-chat-search-bar">
+                    <input type="text" id="receiver-chat-search-input" placeholder="Rechercher un message...">
+                    <select id="receiver-chat-search-user-filter">
+                        <option value="">Tous les utilisateurs</option>
+                    </select>
+                    <button class="btn btn-small" id="receiver-chat-search-clear">✕</button>
+                    <span class="search-results-count" id="receiver-chat-search-count"></span>
+                </div>
+                <!-- Messages épinglés -->
+                <div class="chat-pinned-section hidden" id="receiver-chat-pinned-section">
+                    <div class="pinned-header">📌 Messages épinglés</div>
+                    <div class="pinned-messages-list" id="receiver-chat-pinned-list"></div>
                 </div>
                 <div class="chat-messages" id="receiver-chat-messages">
                     <!-- Messages dynamiques -->
