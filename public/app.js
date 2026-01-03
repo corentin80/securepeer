@@ -1120,14 +1120,22 @@ function initPeerWith(targetOdId, initiator) {
         // Mettre à jour le statut du chat
         updateChatStatus(true);
         
-        // Afficher le chat si le mode l'inclut (côté expéditeur/créateur)
-        if (isCreator && (sessionMode === 'chat' || sessionMode === 'both')) {
-            elements.chatSection.classList.remove('hidden');
+        // Afficher le chat si le mode l'inclut
+        if (sessionMode === 'chat' || sessionMode === 'both') {
+            if (isCreator) {
+                elements.chatSection.classList.remove('hidden');
+            } else {
+                elements.receiverChatSection.classList.remove('hidden');
+            }
         }
         
-        // Afficher la zone fichiers si mode both (côté expéditeur/créateur)
-        if (isCreator && sessionMode === 'both') {
-            elements.bothFileSection.classList.remove('hidden');
+        // Afficher la zone fichiers si mode both
+        if (sessionMode === 'both') {
+            if (isCreator) {
+                elements.bothFileSection.classList.remove('hidden');
+            } else {
+                elements.receiverBothFileSection.classList.remove('hidden');
+            }
         }
         
         if (isCreator) {
