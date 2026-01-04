@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecture & Sécurité - SecurePeer</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .security-container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+        .security-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .security-header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 12px;
+        }
+        .security-header .tagline {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+        .security-section {
+            margin-bottom: 40px;
+        }
+        .security-section h2 {
+            font-size: 1.8rem;
+            margin-bottom: 16px;
+            color: var(--primary);
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 8px;
+        }
+        .security-section h3 {
+            font-size: 1.3rem;
+            margin: 24px 0 12px 0;
+        }
+        .security-section p, .security-section li {
+            line-height: 1.7;
+            color: var(--text);
+            margin-bottom: 12px;
+        }
+        .security-section ul, .security-section ol {
+            margin-left: 24px;
+        }
+        .info-box {
+            background: var(--bg-secondary);
+            border-left: 4px solid #34c759;
+            padding: 16px 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .info-box.warning {
+            border-left-color: #f59e0b;
+        }
+        .info-box.danger {
+            border-left-color: #ef4444;
+        }
+        .info-box strong {
+            color: var(--primary);
+        }
+        .code-block {
+            background: #1c1c1e;
+            color: #f5f5f7;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            margin: 16px 0;
+        }
+        .architecture-diagram {
+            background: var(--bg-secondary);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 24px 0;
+            text-align: center;
+            font-family: monospace;
+            line-height: 2;
+        }
+        .table-container {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg);
+        }
+        th, td {
+            border: 1px solid var(--border);
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 40px;
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header class="top-header">
+        <div class="header-content">
+            <div class="header-logo">
+                <span class="logo-icon">🔒</span>
+                <span class="logo-text">SecurePeer</span>
+            </div>
+        </div>
+    </header>
+    
+    <div class="security-container">
+        <div class="security-header">
+            <h1>🛡️ Architecture & Sécurité</h1>
+            <p class="tagline">Documentation technique complète</p>
+        </div>
+
+        <div class="info-box">
+            <strong>Transparence totale :</strong> Ce document explique en détail comment SecurePeer fonctionne, ce qui est loggué, ce qui ne l'est pas, et quelles sont les garanties et limites de sécurité. Notre code source sera bientôt open-source sur GitHub.
+        </div>
+
+        <!-- ARCHITECTURE -->
+        <div class="security-section">
+            <h2>1. Architecture technique</h2>
+            
+            <h3>1.1 Vue d'ensemble</h3>
+            <p>SecurePeer utilise une architecture <strong>hybride P2P</strong> :</p>
+            <ul>
+                <li><strong>Signalisation centralisée</strong> : WebSocket pour l'échange initial des métadonnées de connexion (SDP, ICE)</li>
+                <li><strong>Transfert de données décentralisé</strong> : WebRTC peer-to-peer direct entre navigateurs</li>
+                <li><strong>TURN fallback</strong> : Serveur TURN auto-hébergé pour les connexions derrière NAT strict</li>
+            </ul>
+
+            <div class="architecture-diagram">
+                [Navigateur A] ←→ [Serveur WebSocket] ←→ [Navigateur B]<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;↓ (signalisation uniquement) ↓<br>
+                [Navigateur A] ←═══════ WebRTC P2P ═══════→ [Navigateur B]<br>
+                <em>(fichiers & messages chiffrés E2E)</em>
+            </div>
+
+            <h3>1.2 Composants serveur</h3>
+            <ol>
+                <li><strong>Nginx</strong> (reverse proxy)
+                    <ul>
+                        <li>SSL/TLS termination (Let's Encrypt)</li>
+                        <li>Headers de sécurité (HSTS, CSP, X-Frame-Options)</li>
+                        <li>Logs désactivés (<code>access_log off</code>)</li>
+                    </ul>
+                </li>
+                <li><strong>Node.js + Express</strong> (serveur WebSocket)
+                    <ul>
+                        <li>Gestion des rooms (création, jointure, signalisation)</li>
+                        <li>Relais des messages SDP/ICE entre peers</li>
+                        <li>Données en mémoire uniquement (pas de base de données)</li>
+                    </ul>
+                </li>
+                <li><strong>coturn</strong> (serveur TURN/STUN)
+                    <ul>
+                        <li>Relay UDP/TCP pour NAT traversal</li>
+                        <li>Credentials éphémères via <code>static-auth-secret</code></li>
+                        <li>Mode <code>no-log</code> strict</li>
+                    </ul>
+                </li>
+            </ol>
+
+            <h3>1.3 Flux de connexion</h3>
+            <ol>
+                <li>Créateur génère un Room ID aléatoire (16 caractères hexadécimaux)</li>
+                <li>Créateur génère une paire de clés ECDH (Curve25519)</li>
+                <li>Lien de partage créé : <code>https://securepeer.eu/#roomId_mode_ecdh</code></li>
+                <li>Destinataire clique sur le lien, génère sa propre paire ECDH</li>
+                <li>Échange de clés publiques via WebSocket</li>
+                <li>Dérivation du secret partagé (ECDH) → clé AES-256</li>
+                <li>Établissement de la connexion WebRTC (SDP offer/answer, ICE candidates)</li>
+                <li>Transfert de données chiffrées directement via DataChannel</li>
+            </ol>
+        </div>
+
+        <!-- CHIFFREMENT -->
+        <div class="security-section">
+            <h2>2. Chiffrement et cryptographie</h2>
+            
+            <h3>2.1 Chiffrement des données (AES-256-GCM)</h3>
+            <div class="code-block">
+Algorithm: AES-256-GCM (Galois/Counter Mode)<br>
+Key size: 256 bits<br>
+IV: 96 bits random per message<br>
+Auth tag: 128 bits (integrity + authentication)
+            </div>
+            <p><strong>Pourquoi AES-256-GCM ?</strong></p>
+            <ul>
+                <li>Standard industriel (NIST, NSA Suite B)</li>
+                <li>AEAD (Authenticated Encryption with Associated Data) : chiffrement + intégrité en un seul pass</li>
+                <li>Résistant aux attaques par timing et padding oracle</li>
+                <li>Support matériel (AES-NI) pour performances optimales</li>
+            </ul>
+
+            <h3>2.2 Échange de clés (ECDH)</h3>
+            <div class="code-block">
+Curve: X25519 (Curve25519 pour ECDH)<br>
+Key derivation: HKDF-SHA256<br>
+Public key exchange: Via WebSocket (signalisation)
+            </div>
+            <p><strong>Avantages d'ECDH :</strong></p>
+            <ul>
+                <li>Clé de chiffrement jamais transmise (dérivée localement des deux côtés)</li>
+                <li>Résistant aux attaques quantiques futures (avec migration vers post-quantum crypto prévue)</li>
+                <li>Forward secrecy partielle (clé unique par session)</li>
+            </ul>
+
+            <h3>2.3 Dérivation de clé (KDF)</h3>
+            <p>Pour les sessions protégées par mot de passe :</p>
+            <div class="code-block">
+Algorithm: PBKDF2-SHA256<br>
+Iterations: 310,000 (OWASP recommendation 2023)<br>
+Salt: 128 bits random<br>
+Output: 256 bits AES key
+            </div>
+
+            <h3>2.4 Intégrité des fichiers</h3>
+            <p>Chaque fichier transféré est vérifié avec :</p>
+            <ul>
+                <li><strong>SHA-256 hash</strong> calculé côté émetteur</li>
+                <li>Hash envoyé avec les métadonnées (chiffré)</li>
+                <li>Vérification automatique côté récepteur après reconstruction</li>
+                <li>Icône ✅ "Intégrité vérifiée" affichée si le hash correspond</li>
+            </ul>
+        </div>
+
+        <!-- LOGS & DONNÉES -->
+        <div class="security-section">
+            <h2>3. Ce qui est loggué (et ce qui ne l'est pas)</h2>
+            
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Composant</th>
+                            <th>Donnée</th>
+                            <th>Statut</th>
+                            <th>Rétention</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Nginx</td>
+                            <td>Access logs (IP, User-Agent, URL)</td>
+                            <td>❌ DÉSACTIVÉ</td>
+                            <td>N/A</td>
+                        </tr>
+                        <tr>
+                            <td>Nginx</td>
+                            <td>Error logs</td>
+                            <td>❌ REDIRIGÉ vers /dev/null</td>
+                            <td>N/A</td>
+                        </tr>
+                        <tr>
+                            <td>Node.js</td>
+                            <td>Console logs (debug)</td>
+                            <td>⚠️ STDOUT (systemd journal)</td>
+                            <td>Purgé toutes les heures</td>
+                        </tr>
+                        <tr>
+                            <td>Node.js</td>
+                            <td>Room ID, pseudos</td>
+                            <td>✅ EN MÉMOIRE</td>
+                            <td>Supprimé à la fin de session</td>
+                        </tr>
+                        <tr>
+                            <td>coturn</td>
+                            <td>Connexions TURN</td>
+                            <td>❌ DÉSACTIVÉ (no-log)</td>
+                            <td>N/A</td>
+                        </tr>
+                        <tr>
+                            <td>Base de données</td>
+                            <td>Tout</td>
+                            <td>❌ PAS DE BDD</td>
+                            <td>N/A</td>
+                        </tr>
+                        <tr>
+                            <td>Fichiers transférés</td>
+                            <td>Contenu, métadonnées</td>
+                            <td>❌ JAMAIS SUR SERVEUR</td>
+                            <td>N/A (P2P direct)</td>
+                        </tr>
+                        <tr>
+                            <td>Messages chat</td>
+                            <td>Contenu</td>
+                            <td>❌ JAMAIS SUR SERVEUR</td>
+                            <td>N/A (P2P direct)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>3.1 Purge automatique des logs</h3>
+            <p>Un script cron s'exécute toutes les heures (<code>/usr/local/bin/purge_logs.sh</code>) pour :</p>
+            <ul>
+                <li>Purger le journal systemd : <code>journalctl --vacuum-time=3d</code></li>
+                <li>Vider les logs SSH : <code>/var/log/auth.log</code></li>
+                <li>Anonymiser les IPs résiduelles (dernier octet → .xxx)</li>
+            </ul>
+
+            <h3>3.2 Données en mémoire (RAM)</h3>
+            <p>Le serveur Node.js conserve temporairement :</p>
+            <div class="code-block">
+{<br>
+&nbsp;&nbsp;"roomId": "a3f5e8c2d1b4f9e7",<br>
+&nbsp;&nbsp;"participants": [<br>
+&nbsp;&nbsp;&nbsp;&nbsp;{"odId": "random123", "pseudo": "Alice"},<br>
+&nbsp;&nbsp;&nbsp;&nbsp;{"odId": "random456", "pseudo": "Bob"}<br>
+&nbsp;&nbsp;],<br>
+&nbsp;&nbsp;"mode": "both",<br>
+&nbsp;&nbsp;"createdAt": 1704297600000<br>
+}
+            </div>
+            <p><strong>Suppression :</strong> Dès que tous les participants se déconnectent, ou après 24h maximum (timeout).</p>
+        </div>
+
+        <!-- HEADERS SÉCURITÉ -->
+        <div class="security-section">
+            <h2>4. Headers de sécurité HTTP</h2>
+            <div class="code-block">
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload<br>
+Content-Security-Policy: default-src 'self'; script-src 'self'; ...<br>
+X-Frame-Options: DENY<br>
+X-Content-Type-Options: nosniff<br>
+Referrer-Policy: no-referrer<br>
+Permissions-Policy: geolocation=(), microphone=(), camera=()
+            </div>
+            <p><strong>Explications :</strong></p>
+            <ul>
+                <li><strong>HSTS preload</strong> : Force HTTPS même si l'utilisateur tape http:// (inclus dans la liste de préchargement des navigateurs)</li>
+                <li><strong>CSP strict</strong> : Bloque tout script externe, inline JS, et ressources non auto-hébergées</li>
+                <li><strong>X-Frame-Options</strong> : Empêche le clickjacking (interdiction d'iframe)</li>
+                <li><strong>Permissions-Policy</strong> : Désactive l'accès à la géolocalisation, micro, caméra (pas utilisés)</li>
+            </ul>
+        </div>
+
+        <!-- SERVEUR SSH -->
+        <div class="security-section">
+            <h2>5. Sécurité du serveur (infrastructure)</h2>
+            
+            <h3>5.1 Accès SSH</h3>
+            <ul>
+                <li>Authentification par clé ED25519 uniquement (pas de mot de passe)</li>
+                <li>MFA (Google Authenticator) obligatoire pour IPs non-whitelistées</li>
+                <li>fail2ban actif : 5 tentatives max, ban 1h</li>
+                <li>Port 22 exposé (standard, mais protégé par MFA)</li>
+            </ul>
+
+            <h3>5.2 Mises à jour automatiques</h3>
+            <div class="code-block">
+unattended-upgrades: ENABLED<br>
+Auto-reboot: 03:00 if kernel update<br>
+Security patches: Installed within 24h
+            </div>
+
+            <h3>5.3 Firewall</h3>
+            <p>Ports ouverts (ufw) :</p>
+            <ul>
+                <li>22/tcp : SSH (protégé par fail2ban + MFA)</li>
+                <li>80/tcp : HTTP → redirect to HTTPS</li>
+                <li>443/tcp : HTTPS (Nginx)</li>
+                <li>3478/udp, 3478/tcp : STUN (coturn)</li>
+                <li>5349/tcp : TURNS over TLS (coturn)</li>
+                <li>49152-65535/udp : Plage TURN relay</li>
+            </ul>
+        </div>
+
+        <!-- MODÈLE DE MENACES -->
+        <div class="security-section">
+            <h2>6. Modèle de menaces</h2>
+            
+            <h3>6.1 Contre quoi SecurePeer protège</h3>
+            <div class="info-box">
+                <strong>✅ PROTÈGE :</strong>
+                <ul>
+                    <li>Interception des données en transit (Man-in-the-Middle) → TLS + E2EE</li>
+                    <li>Accès aux fichiers/messages par l'opérateur du serveur → Chiffrement E2E</li>
+                    <li>Compromission du serveur → Pas de données stockées</li>
+                    <li>Demandes légales de données → Rien à fournir (no-log)</li>
+                    <li>Tracking analytics → Pas de trackers tiers</li>
+                </ul>
+            </div>
+
+            <h3>6.2 Limites et menaces résiduelles</h3>
+            <div class="info-box warning">
+                <strong>⚠️ LIMITES :</strong>
+                <ul>
+                    <li><strong>Adresse IP visible par les autres participants</strong> (nature du P2P WebRTC)<br>
+                    → <em>Mitigation : Utiliser Tor Browser ou VPN</em></li>
+                    <li><strong>Métadonnées de timing</strong> (heure de connexion, durée de session)<br>
+                    → <em>Mitigation : Logs purgés toutes les heures</em></li>
+                    <li><strong>Attaques au niveau navigateur</strong> (malware, keylogger, XSS)<br>
+                    → <em>Mitigation : CSP strict, pas de scripts inline</em></li>
+                    <li><strong>Pas de Forward Secrecy parfaite</strong> (ratchet pas encore implémenté)<br>
+                    → <em>Roadmap : Double Ratchet prévu en Phase 2</em></li>
+                    <li><strong>Corrélation temporelle</strong> (analyste passif peut voir connexions simultanées)<br>
+                    → <em>Mitigation : Utiliser Tor + delays aléatoires</em></li>
+                </ul>
+            </div>
+
+            <h3>6.3 Adversaires hors scope</h3>
+            <div class="info-box danger">
+                <strong>❌ NE PROTÈGE PAS CONTRE :</strong>
+                <ul>
+                    <li>Malware côté client (trojan, RAT, spyware)</li>
+                    <li>Compromission physique de l'appareil</li>
+                    <li>Attaques quantiques (algorithmes post-quantum pas encore intégrés)</li>
+                    <li>Adversaires globaux passifs (NSA-level surveillance de tout Internet)</li>
+                    <li>Backdoors matérielles (Intel ME, IME)</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- AUDITS -->
+        <div class="security-section">
+            <h2>7. Audits et transparence</h2>
+            
+            <h3>7.1 Code open-source</h3>
+            <p>Le code source de SecurePeer sera publié sur GitHub sous licence MIT :</p>
+            <ul>
+                <li>Frontend : HTML/CSS/JavaScript vanilla</li>
+                <li>Backend : Node.js + Express + ws</li>
+                <li>Infrastructure : Scripts Ansible pour réplication</li>
+            </ul>
+
+            <h3>7.2 Audit de sécurité</h3>
+            <p><strong>Statut :</strong> Pas encore audité par un tiers indépendant.</p>
+            <p><strong>Roadmap :</strong> Audit prévu en Q2 2026 par un cabinet spécialisé (Trail of Bits, Cure53, ou similaire).</p>
+            <p><strong>Bug bounty :</strong> Programme de prime aux bugs à venir (responsable disclosure).</p>
+
+            <h3>7.3 Rapport de transparence</h3>
+            <p>Publié trimestriellement sur GitHub :</p>
+            <ul>
+                <li>Nombre de demandes légales reçues (actuellement : 0)</li>
+                <li>Incidents de sécurité (actuellement : aucun)</li>
+                <li>Durée moyenne de uptime</li>
+                <li>Mise à jour du canari de sécurité</li>
+            </ul>
+        </div>
+
+        <!-- AMÉLIORATIONS FUTURES -->
+        <div class="security-section">
+            <h2>8. Feuille de route sécurité (2026)</h2>
+            
+            <h3>Phase 2 : Cryptographie avancée</h3>
+            <ul>
+                <li>✅ ECDH (Curve25519) - <em>IMPLÉMENTÉ</em></li>
+                <li>⏳ Symmetric Ratchet (HKDF chain) pour forward secrecy</li>
+                <li>⏳ Double Ratchet (Signal Protocol) pour Perfect Forward Secrecy</li>
+                <li>⏳ Post-Quantum Crypto (CRYSTALS-Kyber) pour résistance quantique</li>
+            </ul>
+
+            <h3>Phase 3 : Anonymat réseau</h3>
+            <ul>
+                <li>⏳ Mode TURN-only (forcer relay pour masquer IP)</li>
+                <li>⏳ Support .onion (Tor Hidden Service)</li>
+                <li>⏳ I2P support</li>
+            </ul>
+
+            <h3>Phase 4 : Résilience</h3>
+            <ul>
+                <li>⏳ Multi-serveurs (load balancing + failover)</li>
+                <li>⏳ Support fédération (plusieurs instances SecurePeer)</li>
+                <li>⏳ Mode offline-first (PWA + synchronisation différée)</li>
+            </ul>
+        </div>
+
+        <!-- RECOMMANDATIONS -->
+        <div class="security-section">
+            <h2>9. Recommandations d'utilisation</h2>
+            
+            <h3>Pour utilisateurs standard</h3>
+            <ul>
+                <li>Utiliser des mots de passe forts pour les sessions sensibles</li>
+                <li>Fermer manuellement les sessions après utilisation</li>
+                <li>Vérifier le cadenas vert (HTTPS) dans la barre d'adresse</li>
+                <li>Ne jamais partager le lien sur des canaux publics</li>
+            </ul>
+
+            <h3>Pour militants/journalistes/dissidents</h3>
+            <ul>
+                <li>🧅 OBLIGATOIRE : Utiliser Tor Browser</li>
+                <li>🔐 Activer la protection par mot de passe</li>
+                <li>⏱️ Limiter la durée de session (15 min max)</li>
+                <li>🔒 Activer "Verrouillage automatique" après 1er participant</li>
+                <li>💻 Utiliser Tails OS ou Whonix pour isolation maximale</li>
+                <li>🚫 Éviter de partager le lien via email/SMS (canaux surveillables)</li>
+                <li>📱 Privilégier Signal/Session pour transmettre le lien</li>
+            </ul>
+
+            <h3>Pour développeurs</h3>
+            <ul>
+                <li>Vérifier les headers de sécurité : <code>curl -I https://securepeer.eu</code></li>
+                <li>Inspecter le code source : F12 → Sources</li>
+                <li>Tester la CSP : Tentative de chargement de script externe</li>
+                <li>Signaler les bugs : security@securepeer.eu (GPG disponible)</li>
+            </ul>
+        </div>
+
+        <!-- CONTACT -->
+        <div class="security-section">
+            <h2>10. Contact sécurité</h2>
+            <p>Pour signaler une vulnérabilité ou poser une question :</p>
+            <ul>
+                <li>📧 Email : <strong>security@securepeer.eu</strong></li>
+                <li>🔑 GPG : <code>0x1234ABCD5678EF90</code> (fingerprint complet sur /pgp)</li>
+                <li>🐙 GitHub Security Advisory : <a href="https://github.com/securepeer/issues" target="_blank">github.com/securepeer/issues</a></li>
+            </ul>
+            <p><strong>Responsible Disclosure :</strong> Nous nous engageons à répondre sous 48h et publier un correctif sous 7 jours pour les vulnérabilités critiques.</p>
+        </div>
+
+        <a href="/" class="back-link">← Retour à l'accueil</a>
+    </div>
+
+    <footer style="margin-top: 60px;">
+        <p>🔐 SecurePeer - Sécurité par design, transparence par défaut</p>
+        <p class="footer-links">
+            <a href="privacy.html">Confidentialité</a> | 
+            <a href="security.html">Sécurité</a>
+        </p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

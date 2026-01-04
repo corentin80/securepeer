@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Politique de confidentialité - SecurePeer</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .privacy-container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+        .privacy-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .privacy-header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 12px;
+        }
+        .privacy-header .last-updated {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+        .privacy-section {
+            margin-bottom: 32px;
+        }
+        .privacy-section h2 {
+            font-size: 1.6rem;
+            margin-bottom: 12px;
+            color: var(--primary);
+        }
+        .privacy-section h3 {
+            font-size: 1.2rem;
+            margin: 20px 0 8px 0;
+        }
+        .privacy-section p, .privacy-section li {
+            line-height: 1.7;
+            color: var(--text);
+            margin-bottom: 12px;
+        }
+        .privacy-section ul {
+            margin-left: 24px;
+        }
+        .highlight-box {
+            background: var(--bg-secondary);
+            border-left: 4px solid var(--primary);
+            padding: 16px 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .highlight-box strong {
+            color: var(--primary);
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 40px;
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header class="top-header">
+        <div class="header-content">
+            <div class="header-logo">
+                <span class="logo-icon">🔒</span>
+                <span class="logo-text">SecurePeer</span>
+            </div>
+        </div>
+    </header>
+    
+    <div class="privacy-container">
+        <div class="privacy-header">
+            <h1>🔐 Politique de confidentialité</h1>
+            <p class="last-updated">Dernière mise à jour : 3 janvier 2026</p>
+        </div>
+
+        <div class="highlight-box">
+            <strong>TL;DR :</strong> SecurePeer ne collecte, ne stocke et ne vend AUCUNE donnée personnelle. Vos fichiers et messages transitent directement entre appareils (P2P) via WebRTC. Nous n'avons jamais accès à vos contenus.
+        </div>
+
+        <div class="privacy-section">
+            <h2>1. Philosophie de confidentialité</h2>
+            <p>SecurePeer a été conçu dès le départ avec une philosophie <strong>"zero-knowledge"</strong> : nous ne pouvons pas voir, lire ou accéder à vos données car nous ne les stockons jamais.</p>
+            <p>Contrairement aux plateformes de partage de fichiers traditionnelles qui stockent vos fichiers sur leurs serveurs, SecurePeer utilise une architecture <strong>peer-to-peer (P2P)</strong> où les données transitent directement de votre appareil vers celui du destinataire.</p>
+        </div>
+
+        <div class="privacy-section">
+            <h2>2. Données que nous NE collectons PAS</h2>
+            <ul>
+                <li>❌ Vos fichiers et leurs contenus</li>
+                <li>❌ Vos messages de chat</li>
+                <li>❌ Votre adresse IP</li>
+                <li>❌ Votre localisation géographique</li>
+                <li>❌ Votre identité réelle</li>
+                <li>❌ Vos métadonnées (noms de fichiers, taille, type)</li>
+                <li>❌ Votre historique de navigation ou d'utilisation</li>
+                <li>❌ Cookies de tracking ou analytics</li>
+            </ul>
+        </div>
+
+        <div class="privacy-section">
+            <h2>3. Données temporaires minimales</h2>
+            <h3>3.1 Logs serveur</h3>
+            <p>Notre serveur de signalisation WebSocket est configuré en mode <strong>no-log</strong> :</p>
+            <ul>
+                <li>Les logs d'accès Nginx sont <strong>désactivés</strong> (<code>access_log off</code>)</li>
+                <li>Les logs d'erreur sont redirigés vers <code>/dev/null</code></li>
+                <li>Les logs système (journald) sont automatiquement purgés toutes les heures</li>
+                <li>Les adresses IP dans les logs résiduels sont automatiquement anonymisées (dernier octet masqué)</li>
+            </ul>
+
+            <h3>3.2 Serveur TURN</h3>
+            <p>Notre serveur TURN (coturn) utilisé pour les connexions derrière NAT strict est configuré avec :</p>
+            <ul>
+                <li><code>no-log</code> - Aucun log des connexions</li>
+                <li><code>no-stdout-log</code> - Pas de sortie console</li>
+                <li>Credentials éphémères générés dynamiquement (pas de stockage)</li>
+            </ul>
+
+            <h3>3.3 Données en mémoire volatile</h3>
+            <p>Le serveur conserve temporairement en RAM (uniquement le temps de la session) :</p>
+            <ul>
+                <li>Room ID (identifiant de session aléatoire)</li>
+                <li>Pseudonymes choisis (non liés à une identité réelle)</li>
+                <li>Messages de signalisation WebRTC (ICE candidates, SDP offers/answers)</li>
+            </ul>
+            <p><strong>Ces données sont supprimées immédiatement</strong> lorsque tous les participants quittent la session ou après un timeout de 24h maximum.</p>
+        </div>
+
+        <div class="privacy-section">
+            <h2>4. Chiffrement de bout en bout (E2EE)</h2>
+            <p>Toutes les données échangées via SecurePeer sont chiffrées avec <strong>AES-256-GCM</strong>, un algorithme de chiffrement de qualité militaire :</p>
+            <ul>
+                <li>La clé de chiffrement est générée localement dans votre navigateur</li>
+                <li>La clé est partagée via ECDH (Elliptic Curve Diffie-Hellman) ou incluse dans le lien (hash #fragment, jamais envoyé au serveur)</li>
+                <li>Le serveur ne peut jamais déchiffrer vos données car il n'a jamais accès à la clé</li>
+                <li>Même en cas de compromission du serveur, vos données historiques restent protégées</li>
+            </ul>
+        </div>
+
+        <div class="privacy-section">
+            <h2>5. Données stockées localement (navigateur)</h2>
+            <p>SecurePeer utilise le localStorage de votre navigateur pour :</p>
+            <ul>
+                <li>Votre pseudo (pour ne pas le redemander à chaque session)</li>
+                <li>Votre préférence de thème (clair/sombre)</li>
+                <li>Votre langue préférée</li>
+                <li>État "Ne plus afficher" du popup Tor Browser</li>
+            </ul>
+            <p><strong>Ces données restent sur votre appareil</strong> et ne sont jamais envoyées à nos serveurs. Vous pouvez les supprimer à tout moment en effaçant les données de navigation de votre navigateur.</p>
+        </div>
+
+        <div class="privacy-section">
+            <h2>6. Connexions WebRTC P2P</h2>
+            <p>SecurePeer utilise WebRTC pour établir des connexions <strong>directes</strong> entre participants :</p>
+            <ul>
+                <li>Une fois la connexion établie, les données transitent directement entre appareils sans passer par notre serveur</li>
+                <li>Le serveur ne sert que de point de signalisation initial (échange de SDP/ICE)</li>
+                <li>Votre adresse IP peut être visible par les autres participants (nature du P2P)</li>
+                <li>Pour masquer votre IP, utilisez Tor Browser ou un VPN avant de créer/rejoindre une session</li>
+            </ul>
+        </div>
+
+        <div class="privacy-section">
+            <h2>7. Services tiers</h2>
+            <p>SecurePeer n'utilise <strong>AUCUN service tiers</strong> :</p>
+            <ul>
+                <li>❌ Pas de Google Analytics</li>
+                <li>❌ Pas de Facebook Pixel</li>
+                <li>❌ Pas de CDN externe (toutes les bibliothèques sont auto-hébergées)</li>
+                <li>❌ Pas de publicités ou de trackers</li>
+                <li>❌ Pas de services cloud tiers (AWS, Google Cloud, etc.)</li>
+            </ul>
+        </div>
+
+        <div class="privacy-section">
+            <h2>8. Conformité RGPD</h2>
+            <p>Bien que SecurePeer soit accessible depuis l'Union Européenne, la conformité RGPD est simplifiée car :</p>
+            <ul>
+                <li>Nous ne collectons aucune donnée personnelle identifiable</li>
+                <li>Nous n'avons aucune base de données utilisateur</li>
+                <li>Il n'y a rien à supprimer, exporter ou rectifier (droit à l'oubli automatique)</li>
+                <li>Pas de consentement requis car pas de cookies de tracking</li>
+            </ul>
+        </div>
+
+        <div class="privacy-section">
+            <h2>9. Demandes légales et transparence</h2>
+            <p>En cas de demande légale (mandat judiciaire, assignation) :</p>
+            <ul>
+                <li>Nous ne pouvons fournir AUCUNE donnée utilisateur car nous n'en stockons pas</li>
+                <li>Les logs sont purgés automatiquement toutes les heures</li>
+                <li>Les sessions sont éphémères et détruites après utilisation</li>
+                <li>Nous publierons un rapport de transparence annuel sur notre GitHub si nous recevons des demandes</li>
+            </ul>
+            <div class="highlight-box">
+                <strong>Canari de transparence :</strong> À ce jour (3 janvier 2026), SecurePeer n'a reçu aucune demande légale d'accès aux données, aucune National Security Letter (NSL), et n'a jamais installé de backdoor ou de dispositif de surveillance. Ce canari sera mis à jour trimestriellement.
+            </div>
+        </div>
+
+        <div class="privacy-section">
+            <h2>10. Recommandations pour maximiser votre vie privée</h2>
+            <p>Pour une protection maximale, nous recommandons :</p>
+            <ul>
+                <li>🧅 Utiliser <strong>Tor Browser</strong> pour masquer votre adresse IP</li>
+                <li>🔐 Activer la protection par mot de passe pour vos sessions</li>
+                <li>🚫 Ne jamais partager le lien de session sur des canaux publics (réseaux sociaux, forums)</li>
+                <li>⏱️ Utiliser des sessions à durée limitée (15 min, 1h) pour les contenus sensibles</li>
+                <li>🔒 Fermer la session manuellement après utilisation</li>
+                <li>💻 Utiliser un OS axé sur la confidentialité (Tails, QubesOS) pour les cas extrêmes</li>
+            </ul>
+        </div>
+
+        <div class="privacy-section">
+            <h2>11. Modifications de cette politique</h2>
+            <p>Toute modification de cette politique sera :</p>
+            <ul>
+                <li>Publiée sur cette page avec une nouvelle date de mise à jour</li>
+                <li>Communiquée via notre dépôt GitHub officiel</li>
+                <li>Notifiée par une bannière temporaire sur le site (si changements majeurs)</li>
+            </ul>
+        </div>
+
+        <div class="privacy-section">
+            <h2>12. Contact</h2>
+            <p>Pour toute question concernant cette politique de confidentialité :</p>
+            <ul>
+                <li>📧 Email : privacy@securepeer.eu</li>
+                <li>🐙 GitHub : <a href="https://github.com/securepeer" target="_blank">github.com/securepeer</a></li>
+            </ul>
+        </div>
+
+        <a href="/" class="back-link">← Retour à l'accueil</a>
+    </div>
+
+    <footer style="margin-top: 60px;">
+        <p>🔐 SecurePeer - Transfert chiffré E2E sans compromis sur la vie privée</p>
+        <p class="footer-links" style="margin-top: 8px; font-size: 0.9rem;">
+            <a href="privacy.html">Confidentialité</a> | 
+            <a href="security.html">Sécurité</a>
+        </p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

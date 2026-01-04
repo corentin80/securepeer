@@ -1583,6 +1583,9 @@ async function generateShareLink() {
     elements.shareLink.value = link;
     elements.linkSection.classList.remove('hidden');
     
+    // Afficher le badge "Session éphémère" dans le header
+    showEphemeralBadge();
+    
     // Génération du QR Code
     const qrcodeContainer = document.getElementById('qrcode-container');
     const qrcodeDiv = document.getElementById('qrcode');
@@ -2111,6 +2114,7 @@ function handleHashConnection(hash) {
         elements.receiverSection.classList.remove('hidden');
         elements.receiverPasswordBlock.classList.remove('hidden');
         elements.receiverStatus.textContent = 'Mot de passe requis pour déchiffrer.';
+        showEphemeralBadge();
         
         // Afficher le chat si le mode l'inclut
         if (sessionMode === 'chat' || sessionMode === 'both') {
@@ -2136,6 +2140,7 @@ function handleHashConnection(hash) {
         
         elements.receiverSection.classList.remove('hidden');
         elements.receiverStatus.textContent = 'Échange de clés sécurisé en cours...';
+        showEphemeralBadge();
         
         // Afficher le chat si le mode l'inclut
         if (sessionMode === 'chat' || sessionMode === 'both') {
@@ -2164,6 +2169,7 @@ function handleHashConnection(hash) {
         isReceiver = true;
 
         elements.receiverSection.classList.remove('hidden');
+        showEphemeralBadge();
         
         // Afficher le chat si le mode l'inclut
         if (sessionMode === 'chat' || sessionMode === 'both') {
@@ -2940,6 +2946,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateLanguage();
     setupThemeToggle();
     
+    // Vérifier et afficher le popup Tor (première utilisation)
+    checkAndShowTorPopup();
+    
     // Attacher les event listeners des boutons de fermeture de session (toujours, quel que soit le mode)
     setupCloseSessionButtons();
     
@@ -3104,6 +3113,9 @@ async function restoreReceiverSession(restored, hash) {
     
     // Afficher la section receiver
     elements.receiverSection.classList.remove('hidden');
+    
+    // Afficher le badge "Session éphémère" dans le header
+    showEphemeralBadge();
     
     // Gérer la clé crypto
     if (usePassword && !restored.cryptoKeyB64) {
@@ -4827,6 +4839,59 @@ async function handleBothFileComplete(data) {
 
 // Démarrer l'application
 // document.addEventListener('DOMContentLoaded', init);
+
+// Vérifier et afficher le popup Tor Browser pour la première utilisation
+function checkAndShowTorPopup() {
+    const torPopupDismissed = localStorage.getItem('torPopupDismissed');
+    
+    // Afficher seulement si jamais affiché ou pas définitivement masqué
+    if (!torPopupDismissed) {
+        const torPopup = document.getElementById('tor-popup');
+        const torDismissBtn = document.getElementById('tor-dismiss');
+        const torDontShow = document.getElementById('tor-dont-show');
+        
+        // Afficher le popup après 1 seconde
+        setTimeout(() => {
+            torPopup.classList.remove('hidden');
+        }, 1000);
+        
+        // Bouton "Continuer sans Tor"
+        torDismissBtn.addEventListener('click', () => {
+            torPopup.classList.add('hidden');
+            
+            // Si l'utilisateur a coché "Ne plus afficher"
+            if (torDontShow.checked) {
+                localStorage.setItem('torPopupDismissed', 'true');
+            }
+        });
+        
+        // Fermer aussi en cliquant sur le fond
+        torPopup.addEventListener('click', (e) => {
+            if (e.target === torPopup) {
+                torPopup.classList.add('hidden');
+                if (torDontShow.checked) {
+                    localStorage.setItem('torPopupDismissed', 'true');
+                }
+            }
+        });
+    }
+}
+
+// Afficher le badge "Session éphémère" quand une session est active
+function showEphemeralBadge() {
+    const badge = document.getElementById('ephemeral-badge');
+    if (badge) {
+        badge.classList.remove('hidden');
+    }
+}
+
+// Masquer le badge "Session éphémère"
+function hideEphemeralBadge() {
+    const badge = document.getElementById('ephemeral-badge');
+    if (badge) {
+        badge.classList.add('hidden');
+    }
+}
 
 // Recharger la page quand le hash change (pour coller un nouveau lien)
 window.addEventListener('hashchange', () => {

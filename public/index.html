@@ -12,6 +12,7 @@
             <div class="header-logo">
                 <span class="logo-icon">🔒</span>
                 <span class="logo-text">SecurePeer</span>
+                <span class="ephemeral-badge hidden" id="ephemeral-badge" title="Cette session est temporaire et sera détruite après utilisation">⏱️ Session éphémère</span>
             </div>
             <div class="header-actions">
                 <button id="theme-toggle" class="theme-toggle" title="Changer de thème">🌓</button>
@@ -215,6 +216,10 @@
                 <div class="link-header">
                     <h3>🔗 Lien de partage généré</h3>
                     <p class="link-info">Partagez ce lien avec le destinataire</p>
+                </div>
+                <div class="security-warning">
+                    <span class="warning-icon">⚠️</span>
+                    <p><strong>Attention :</strong> Ce lien contient la clé de chiffrement. Ne le partagez pas publiquement.</p>
                 </div>
                 <div class="link-container">
                     <input type="text" id="share-link" readonly class="share-link-input">
@@ -420,8 +425,40 @@
         </section>
 
         <footer>
-            <p>🔐 Chiffrement AES-256-GCM | 🌐 WebRTC P2P | 🚫 Aucune donnée stockée sur le serveur | SecurePeer</p>
+            <p>🔐 Chiffrement AES-256-GCM | 🌐 WebRTC P2P | 🚫 Aucune donnée stockée sur le serveur</p>
+            <p class="footer-links">
+                <a href="privacy.html" target="_blank">Confidentialité</a> | 
+                <a href="security.html" target="_blank">Sécurité</a> | 
+                <a href="https://github.com/securepeer" target="_blank">GitHub</a>
+            </p>
         </footer>
+    </div>
+
+    <!-- Popup Tor Browser pour première utilisation -->
+    <div id="tor-popup" class="tor-popup hidden">
+        <div class="tor-popup-content">
+            <div class="tor-popup-header">
+                <span class="tor-icon">🧅</span>
+                <h3>Maximiser votre anonymat</h3>
+            </div>
+            <div class="tor-popup-body">
+                <p>Pour une protection maximale de votre vie privée, nous recommandons d'utiliser <strong>Tor Browser</strong>.</p>
+                <ul>
+                    <li>✅ Masque votre adresse IP</li>
+                    <li>✅ Empêche le tracking</li>
+                    <li>✅ Protection contre la surveillance</li>
+                </ul>
+                <p class="tor-hint">SecurePeer utilise déjà du chiffrement E2E, mais Tor Browser ajoute une couche d'anonymat réseau.</p>
+            </div>
+            <div class="tor-popup-actions">
+                <button id="tor-dismiss" class="btn btn-secondary">Continuer sans Tor</button>
+                <a href="https://www.torproject.org/download/" target="_blank" class="btn btn-primary">Télécharger Tor Browser</a>
+            </div>
+            <label class="tor-checkbox">
+                <input type="checkbox" id="tor-dont-show">
+                <span>Ne plus afficher ce message</span>
+            </label>
+        </div>
     </div>
 
     <!-- Simple-peer via CDN -->
