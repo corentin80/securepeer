@@ -1419,23 +1419,23 @@ header h1 {
 }
 
 .reaction-pill.my-reaction {
-
-    .reaction-pill.add-reaction {
-        background: transparent;
-        border: 1px dashed var(--border);
-        opacity: 0.7;
-        font-size: 0.9rem;
-        padding: 2px 6px;
-    }
-
-    .reaction-pill.add-reaction:hover {
-        opacity: 1;
-        border-color: var(--primary);
-        background: var(--bg-secondary);
-    }
     background: var(--primary);
     color: white;
     border-color: var(--primary);
+}
+
+.reaction-pill.add-reaction {
+    background: transparent;
+    border: 1px dashed var(--border);
+    opacity: 0.7;
+    font-size: 0.9rem;
+    padding: 2px 6px;
+}
+
+.reaction-pill.add-reaction:hover {
+    opacity: 1;
+    border-color: var(--primary);
+    background: var(--bg-secondary);
 }
 
 [data-theme="dark"] .reaction-pill {
@@ -2124,6 +2124,8 @@ footer {
     background: var(--bg);
     color: var(--text);
     padding: 6px;
+}
+
 [data-theme="dark"] .connected-users-dropdown option {
     background: #2c2c2e;
     color: var(--text);
@@ -3115,12 +3117,12 @@ footer {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: 99999;
     animation: fadeIn 0.3s ease;
 }
 
 .tor-popup.hidden {
-    display: none;
+    display: none !important;
 }
 
 .tor-popup-content {
