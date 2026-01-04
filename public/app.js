@@ -2349,50 +2349,29 @@ function setupEventListeners() {
     });
     
     // Event listeners - Input file
-    // Réinitialiser la valeur avant ouverture pour éviter les sélections ignorées
-        elements.fileInput.addEventListener('click', () => { elements.fileInput.value = ''; });
-        elements.fileInput.addEventListener('change', async (e) => {
-            try {
-                const files = Array.from(e.target.files || []);
-                if (files.length === 0) {
-                    console.log('❌ Aucun fichier sélectionné');
-                    return;
-                }
-                if (files.length === 1) {
-                    handleFileSelect(files[0]);
-                } else {
-                    await handleMultiFileSelect(files);
-                }
-            } catch (err) {
-                console.error('❌ Erreur dans file input change event:', err);
-                showError('Erreur lors de la sélection du fichier');
-            } finally {
-                elements.fileInput.value = '';
-            }
-        });
-
-    elements.fileInput.addEventListener('change', (e) => {
+    elements.fileInput.addEventListener('click', () => { elements.fileInput.value = ''; });
+    elements.fileInput.addEventListener('change', async (e) => {
         try {
-            const file = e.target.files[0];
-            if (!file) {
-    
-                return;
+            const files = Array.from(e.target.files || []);
+            if (files.length === 0) return;
+            if (files.length === 1) {
+                handleFileSelect(files[0]);
+            } else {
+                await handleMultiFileSelect(files);
             }
-            handleFileSelect(file);
         } catch (err) {
             console.error('❌ Erreur dans file input change event:', err);
             showError('Erreur lors de la sélection du fichier');
         } finally {
-            // Toujours remettre à zéro pour permettre de re-choisir le même fichier sans double ouverture
             elements.fileInput.value = '';
         }
     });
     
     // Event listeners - Boutons
     elements.clearFile.addEventListener('click', clearFileSelection);
-        elements.sendFileBtn.addEventListener('click', () => {
-            startSend();
-        });
+    elements.sendFileBtn.addEventListener('click', () => {
+        startSend();
+    });
     
     
     elements.copyLink.addEventListener('click', () => {

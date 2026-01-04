@@ -222,7 +222,7 @@
                     <p><strong>Attention :</strong> Ce lien identifie votre session. Ne le partagez qu'avec les destinataires prévus.</p>
                 </div>
                 <div class="link-container">
-                    <input type="text" id="share-link" readonly class="share-link-input">
+                    <input type="text" id="share-link" readonly class="share-link-input" title="Lien de partage sécurisé" aria-label="Lien de partage">
                     <button id="copy-link" class="btn btn-primary">📋 Copier</button>
                 </div>
                 <div id="qrcode-container" class="qrcode-container hidden">
@@ -243,7 +243,7 @@
                 </div>
                 
                 <!-- Contrôles de session -->
-                <div class="session-controls" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                <div class="session-controls">
                     <button id="lock-session-btn" class="btn btn-secondary lock-session-btn" title="Bloquer les nouveaux participants">🔒 Verrouiller</button>
                     <button id="close-session" class="btn btn-primary">🚪 Fermer</button>
                 </div>
@@ -264,7 +264,7 @@
                 <!-- Barre de recherche -->
                 <div class="chat-search-bar hidden" id="chat-search-bar">
                     <input type="text" id="chat-search-input" placeholder="Rechercher un message...">
-                    <select id="chat-search-user-filter">
+                    <select id="chat-search-user-filter" title="Filtrer par utilisateur" aria-label="Filtrer par utilisateur">
                         <option value="">Tous les utilisateurs</option>
                     </select>
                     <button class="btn btn-small" id="chat-search-clear">✕</button>
@@ -282,7 +282,7 @@
                     <input type="text" id="chat-input" placeholder="Tapez votre message..." autocomplete="off">
                     <button id="chat-send" class="btn btn-primary">Envoyer</button>
                 </div>
-                <button id="close-chat-session" class="btn btn-primary" style="margin-top: 15px; width: 100%;">🚪 Fermer la session</button>
+                <button id="close-chat-session" class="btn btn-primary btn-close-session">🚪 Fermer la session</button>
             </div>
             
             <!-- Zone de fichiers pour mode both (côté expéditeur) -->
@@ -346,7 +346,7 @@
                 <!-- Barre de recherche -->
                 <div class="chat-search-bar hidden" id="receiver-chat-search-bar">
                     <input type="text" id="receiver-chat-search-input" placeholder="Rechercher un message...">
-                    <select id="receiver-chat-search-user-filter">
+                    <select id="receiver-chat-search-user-filter" title="Filtrer par utilisateur" aria-label="Filtrer par utilisateur">
                         <option value="">Tous les utilisateurs</option>
                     </select>
                     <button class="btn btn-small" id="receiver-chat-search-clear">✕</button>
@@ -364,7 +364,7 @@
                     <input type="text" id="receiver-chat-input" placeholder="Tapez votre message..." autocomplete="off">
                     <button id="receiver-chat-send" class="btn btn-primary">Envoyer</button>
                 </div>
-                <button id="close-receiver-session" class="btn btn-primary" style="margin-top: 15px; width: 100%;">🚪 Fermer la session</button>
+                <button id="close-receiver-session" class="btn btn-primary btn-close-session">🚪 Fermer la session</button>
             </div>
             
             <!-- Zone de fichiers pour mode both (côté destinataire) -->
@@ -429,7 +429,7 @@
             <p class="footer-links">
                 <a href="privacy.html" target="_blank">Confidentialité</a> | 
                 <a href="security.html" target="_blank">Sécurité</a> | 
-                <a href="https://github.com/securepeer" target="_blank">GitHub</a>
+                <a href="https://github.com/securepeer" target="_blank" rel="noopener noreferrer">GitHub</a>
             </p>
         </footer>
     </div>
@@ -452,7 +452,7 @@
             </div>
             <div class="tor-popup-actions">
                 <button id="tor-dismiss" class="btn btn-secondary">Continuer sans Tor</button>
-                <a href="https://www.torproject.org/download/" target="_blank" class="btn btn-primary">Télécharger Tor Browser</a>
+                <a href="https://www.torproject.org/download/" target="_blank" rel="noopener noreferrer" class="btn btn-primary">Télécharger Tor Browser</a>
             </div>
             <label class="tor-checkbox">
                 <input type="checkbox" id="tor-dont-show">

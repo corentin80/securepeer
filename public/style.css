@@ -80,10 +80,6 @@ body {
     color: var(--text);
 }
 
-[data-theme="dark"] .theme-toggle:hover {
-    background: #2c2c2e;
-}
-
 .theme-toggle:hover {
     background: var(--bg-secondary);
     border-color: var(--text-secondary);
@@ -334,10 +330,6 @@ header h1 {
     line-height: 1.5;
 }
 
-[data-theme="dark"] .hero-badges span {
-    background: #1c1c1e;
-}
-
 .language-toggle {
     position: static;
     padding: 8px 16px;
@@ -350,10 +342,6 @@ header h1 {
     transition: all 0.15s ease;
     font-size: 0.9rem;
     z-index: 210;
-}
-
-[data-theme="dark"] .language-toggle:hover {
-    background: #2c2c2e;
 }
 
 .language-toggle:hover {
@@ -391,10 +379,6 @@ header h1 {
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
-[data-theme="dark"] .language-menu {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
-
 .language-menu.hidden {
     display: none !important;
 }
@@ -411,10 +395,6 @@ header h1 {
     transition: all 0.1s ease;
     font-size: 0.9rem;
     font-weight: 400;
-}
-
-[data-theme="dark"] .lang-option:hover {
-    background: #2c2c2e;
 }
 
 .lang-option:hover {
@@ -442,10 +422,6 @@ header h1 {
     padding: 44px;
     margin-bottom: 36px;
     border: none;
-}
-
-[data-theme="dark"] .section {
-    background: #1c1c1e;
 }
 
 [data-theme="dark"] .section {
@@ -485,14 +461,6 @@ header h1 {
 }
 
 [data-theme="dark"] .drop-zone {
-    background: #000000;
-}
-
-[data-theme="dark"] .drop-zone {
-    background: #000000;
-}
-
-[data-theme="dark"] .drop-zone {
     background: var(--bg-secondary);
 }
 
@@ -500,11 +468,6 @@ header h1 {
 .drop-zone.drag-over {
     border-color: var(--primary);
     background: rgba(0, 102, 255, 0.05);
-}
-
-[data-theme="dark"] .drop-zone:hover,
-[data-theme="dark"] .drop-zone.drag-over {
-    background: rgba(0, 102, 255, 0.1);
 }
 
 [data-theme="dark"] .drop-zone:hover,
@@ -874,11 +837,20 @@ header h1 {
 
 /* Session Controls */
 .session-controls {
-    position: relative;
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
 }
 
 .lock-session-btn {
     min-width: 120px;
+}
+
+/* Close Session Button */
+.btn-close-session {
+    margin-top: 15px;
+    width: 100%;
 }
 
 /* Link Section */
@@ -1884,7 +1856,8 @@ header h1 {
 }
 
 /* Footer */
-footer {
+footer,
+.page-footer {
     text-align: center;
     padding: 40px 24px;
     color: var(--text-secondary);
@@ -1893,7 +1866,17 @@ footer {
     margin-top: 40px;
 }
 
-[data-theme="dark"] footer {
+.page-footer {
+    margin-top: 60px;
+}
+
+.page-footer .footer-links {
+    margin-top: 8px;
+    font-size: 0.9rem;
+}
+
+[data-theme="dark"] footer,
+[data-theme="dark"] .page-footer {
     border-top-color: var(--border);
 }
 
@@ -3261,6 +3244,7 @@ footer {
     font-size: 0.9rem;
     color: var(--text-secondary);
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
 }
 
