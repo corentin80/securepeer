@@ -175,16 +175,36 @@
                 </li>
             </ol>
 
-            <h3>1.3 Flux de connexion</h3>
+            <h3>1.3 Format du lien de partage</h3>
+            <p>Le lien contient uniquement l'identifiant de session, jamais les clés de chiffrement :</p>
+            <ul>
+                <li><strong>Mode ECDH (recommandé) :</strong> <code>https://securepeer.eu/#roomId_mode_ecdh</code>
+                    <ul>
+                        <li>Room ID : 16 caractères aléatoires</li>
+                        <li>Mode : file / chat / both</li>
+                        <li><strong>Clé AES-256 : dérivée localement via ECDH, JAMAIS dans l'URL</strong></li>
+                    </ul>
+                </li>
+                <li><strong>Mode Password :</strong> <code>https://securepeer.eu/#roomId_mode_pwd_salt_iterations</code>
+                    <ul>
+                        <li>Salt : fourni dans l'URL (pour dérivation PBKDF2)</li>
+                        <li>Password : saisi localement, jamais transmis</li>
+                        <li><strong>Clé AES-256 : dérivée du password, JAMAIS dans l'URL</strong></li>
+                    </ul>
+                </li>
+            </ul>
+            <p><strong>Implication :</strong> Le lien peut être partagé via des canaux non sécurisés (email, SMS, réseaux publics) sans révéler la clé de chiffrement.</p>
+
+            <h3>1.4 Flux de connexion</h3>
             <ol>
                 <li>Créateur génère un Room ID aléatoire (16 caractères hexadécimaux)</li>
                 <li>Créateur génère une paire de clés ECDH (Curve25519)</li>
                 <li>Lien de partage créé : <code>https://securepeer.eu/#roomId_mode_ecdh</code></li>
                 <li>Destinataire clique sur le lien, génère sa propre paire ECDH</li>
-                <li>Échange de clés publiques via WebSocket</li>
-                <li>Dérivation du secret partagé (ECDH) → clé AES-256</li>
+                <li>Échange de clés publiques via WebSocket sécurisé (TLS)</li>
+                <li>Dérivation du secret partagé (ECDH) → clé AES-256 (effectué localement, côté client)</li>
                 <li>Établissement de la connexion WebRTC (SDP offer/answer, ICE candidates)</li>
-                <li>Transfert de données chiffrées directement via DataChannel</li>
+                <li>Transfert de données chiffrées directement via DataChannel P2P</li>
             </ol>
         </div>
 

@@ -158,7 +158,19 @@
         </div>
 
         <div class="privacy-section">
-            <h2>6. Connexions WebRTC P2P</h2>
+            <h2>6. Lien de partage et sécurité</h2>
+            <p>Le lien de partage contient votre <strong>Room ID</strong> (identifiant de session aléatoire) mais <strong>PAS votre clé de chiffrement</strong> :</p>
+            <ul>
+                <li>✅ <strong>Dans le lien :</strong> Room ID + mode (file/chat/both) + "ecdh"</li>
+                <li>❌ <strong>NOT dans le lien :</strong> Clé AES (dérivée localement via ECDH)</li>
+                <li>❌ <strong>NOT envoyée au serveur :</strong> Aucune clé ou secret</li>
+            </ul>
+            <p>Cependant, quiconque a le lien peut rejoindre la session. À moins d'activer un mot de passe, ne partagez le lien qu'avec les destinataires de confiance.</p>
+            <p><strong>Protection supplémentaire :</strong> Activez un mot de passe de session pour ajouter une couche de sécurité (le salt du mot de passe sera dans l'URL, mais le mot de passe lui-même restera secret).</p>
+        </div>
+
+        <div class="privacy-section">
+            <h2>7. Connexions WebRTC P2P</h2>
             <p>SecurePeer utilise WebRTC pour établir des connexions <strong>directes</strong> entre participants :</p>
             <ul>
                 <li>Une fois la connexion établie, les données transitent directement entre appareils sans passer par notre serveur</li>
@@ -169,7 +181,7 @@
         </div>
 
         <div class="privacy-section">
-            <h2>7. Services tiers</h2>
+            <h2>8. Services tiers</h2>
             <p>SecurePeer n'utilise <strong>AUCUN service tiers</strong> :</p>
             <ul>
                 <li>❌ Pas de Google Analytics</li>
@@ -181,7 +193,7 @@
         </div>
 
         <div class="privacy-section">
-            <h2>8. Conformité RGPD</h2>
+            <h2>9. Conformité RGPD</h2>
             <p>Bien que SecurePeer soit accessible depuis l'Union Européenne, la conformité RGPD est simplifiée car :</p>
             <ul>
                 <li>Nous ne collectons aucune donnée personnelle identifiable</li>
@@ -192,7 +204,7 @@
         </div>
 
         <div class="privacy-section">
-            <h2>9. Demandes légales et transparence</h2>
+            <h2>10. Demandes légales et transparence</h2>
             <p>En cas de demande légale (mandat judiciaire, assignation) :</p>
             <ul>
                 <li>Nous ne pouvons fournir AUCUNE donnée utilisateur car nous n'en stockons pas</li>
@@ -206,7 +218,7 @@
         </div>
 
         <div class="privacy-section">
-            <h2>10. Recommandations pour maximiser votre vie privée</h2>
+            <h2>11. Recommandations pour maximiser votre vie privée</h2>
             <p>Pour une protection maximale, nous recommandons :</p>
             <ul>
                 <li>🧅 Utiliser <strong>Tor Browser</strong> pour masquer votre adresse IP</li>
@@ -219,7 +231,7 @@
         </div>
 
         <div class="privacy-section">
-            <h2>11. Modifications de cette politique</h2>
+            <h2>12. Modifications de cette politique</h2>
             <p>Toute modification de cette politique sera :</p>
             <ul>
                 <li>Publiée sur cette page avec une nouvelle date de mise à jour</li>
@@ -229,7 +241,7 @@
         </div>
 
         <div class="privacy-section">
-            <h2>12. Contact</h2>
+            <h2>13. Contact</h2>
             <p>Pour toute question concernant cette politique de confidentialité :</p>
             <ul>
                 <li>📧 Email : privacy@securepeer.eu</li>
