@@ -923,10 +923,9 @@ async function completeDoubleRatchetHandshake(odId, theirPublicKeyB64) {
  * Encode un message avec header chiffré
  * Header = encryptedHeader(messageNumber || dhPublicKey)
  */
-async function encryptMessageHeader(state, plaintext) {
+async function encryptMessageHeader(state, plaintext, chainKey, messageNumber) {
     try {
-        // Dériver une clé de header depuis la chainKey actuelle
-        const chainKey = state.sendChain.chainKey;
+        // Dériver une clé de header depuis la chainKey fournie (non avancée)
         const headerHmac = await window.crypto.subtle.importKey(
             'raw',
             chainKey,
@@ -942,9 +941,8 @@ async function encryptMessageHeader(state, plaintext) {
         ));
         
         // Header = messageNumber (4 bytes) || dhPublicKey (65 bytes) || padding
-        const msgNum = state.sendChain.messageNumber;
         const msgNumBytes = new Uint8Array(4);
-        new DataView(msgNumBytes.buffer).setUint32(0, msgNum, false);
+        new DataView(msgNumBytes.buffer).setUint32(0, messageNumber, false);
         
         const dhPublicKeyRaw = Uint8Array.from(atob(state.dhRatchet.publicKeyB64), c => c.charCodeAt(0));
         const headerPlain = new Uint8Array([...msgNumBytes, ...dhPublicKeyRaw]);
@@ -994,6 +992,10 @@ async function sendMessageWithDoubleRatchet(odId, plaintext) {
             throw new Error('Send chain pas encore active (handshake incomplet)');
         }
         
+        // Sauvegarder la chainKey AVANT de l'avancer (pour le header)
+        const currentChainKey = state.sendChain.chainKey;
+        const currentMessageNumber = state.sendChain.messageNumber;
+        
         // Avancer la chaîne symétrique
         const { newCK, messageKey } = await kdfCK(state.sendChain.chainKey);
         state.sendChain.chainKey = newCK;
@@ -1019,8 +1021,8 @@ async function sendMessageWithDoubleRatchet(odId, plaintext) {
         encryptedMessage.set(iv);
         encryptedMessage.set(ciphertext, iv.length);
         
-        // Encoder header avec numéro de message
-        const headerEncrypted = await encryptMessageHeader(state, encryptedMessage);
+        // Encoder header avec la chainKey et messageNumber AVANT l'avancement
+        const headerEncrypted = await encryptMessageHeader(state, encryptedMessage, currentChainKey, currentMessageNumber);
         
         // DH Ratchet: tous les 100 messages OU après 30 minutes
         state.sendChain.messageNumber++;
