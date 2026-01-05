@@ -830,7 +830,8 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
                 },
                 recvChain: {
                     chainKey: initialChainKey,
-                    messageNumber: 0
+                    messageNumber: 0,
+                    active: true // Non-initiator reçoit en premier
                 },
                 dhRatchet: {
                     keyPair: dhKeyPair,
@@ -888,6 +889,10 @@ async function completeDoubleRatchetHandshake(odId, theirPublicKeyB64) {
         // Dériver nouvelle rootKey + initChainKey
         const result = await kdfRK(state.rootKey, new Uint8Array(sharedBits));
         state.rootKey = result.rootKey;
+        
+        // Mettre à jour les chaînes avec le nouveau chainKey
+        state.sendChain.chainKey = result.chainKey;
+        state.recvChain.chainKey = result.chainKey;
         
         // Activer les chaînes si elles ne sont pas encore actives
         if (!state.sendChain.active && state.sendChain.messageNumber === 0) {
@@ -1244,7 +1249,7 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
                     throw new Error('Clé sautée non trouvée dans le buffer');
                 }
             } catch (innerErr) {
-                console.error('❌ Erreur avec skipped keys:', innerErr.message);
+                console.error('❌ Erreur avec skipped keys:', innerErr.message, innerErr);
                 throw err; // Throw original error
             }
         }
