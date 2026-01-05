@@ -886,8 +886,19 @@ async function completeDoubleRatchetHandshake(odId, theirPublicKeyB64) {
             256
         );
         
-        // Stocker leur clé DH (le vrai ratchet se fera lors du premier message)
-        // Ne pas toucher aux chainKeys - elles doivent rester synchronisées depuis init
+        // Dériver nouvelle rootKey + chainKey depuis le DH
+        const result = await kdfRK(state.rootKey, new Uint8Array(sharedBits));
+        state.rootKey = result.rootKey;
+        
+        // Mettre à jour la chainKey de la chaîne ACTIVE (pas les deux!)
+        // L'initiator met à jour sendChain, le non-initiator met à jour recvChain
+        if (state.sendChain.active) {
+            // Initiator: update sendChain
+            state.sendChain.chainKey = result.chainKey;
+        } else {
+            // Non-initiator: update recvChain
+            state.recvChain.chainKey = result.chainKey;
+        }
         
         // Activer les chaînes si elles ne sont pas encore actives
         if (!state.sendChain.active && state.sendChain.messageNumber === 0) {
