@@ -1920,17 +1920,28 @@ function getConnectedPeer() {
 }
 
 // Envoyer des données à tous les peers connectés
-function broadcastToAllPeers(data) {
+async function broadcastToAllPeers(data) {
     const dataStr = typeof data === 'string' ? data : JSON.stringify(data);
-    peers.forEach((p, odId) => {
+    
+    for (const [odId, p] of peers.entries()) {
         if (p.connected) {
             try {
-                p.send(dataStr);
+                // Si Double Ratchet est initialisé pour ce peer, chiffrer
+                if (doubleRatchetState.has(odId)) {
+                    const plaintext = new TextEncoder().encode(dataStr);
+                    const encrypted = await sendMessageWithDoubleRatchet(odId, plaintext);
+                    p.send(JSON.stringify(encrypted));
+                    console.log('🔐 Message chiffré avec Double Ratchet vers', odId);
+                } else {
+                    // Fallback: envoi en clair (pour compatibilité temporaire)
+                    p.send(dataStr);
+                    console.warn('⚠️ Envoi non chiffré vers', odId, '(Double Ratchet non initialisé)');
+                }
             } catch (err) {
                 console.error(`❌ Erreur envoi vers ${odId}:`, err);
             }
         }
-    });
+    }
 }
 
 // ===== TRANSFERT DE FICHIER =====
@@ -2004,6 +2015,24 @@ async function handleAuthChallenge(data, fromOdId) {
 
         authVerified = true;
         elements.receiverStatus.textContent = 'Mot de passe validé. Connexion sécurisée.';
+        
+        // Initialiser Double Ratchet côté destinataire (non-initiator)
+        if (fromOdId && cryptoKey) {
+            try {
+                const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
+                const sharedSecret = new Uint8Array(keyMaterial);
+                const dhPublicKey = await initializeDoubleRatchet(fromOdId, sharedSecret, false);
+                
+                // Envoyer notre clé DH publique
+                peer.send(JSON.stringify({
+                    type: 'double-ratchet-init',
+                    dhPublicKey: dhPublicKey
+                }));
+                console.log('🔐 Double Ratchet initialisé côté destinataire pour', fromOdId);
+            } catch (err) {
+                console.error('❌ Erreur init Double Ratchet destinataire:', err);
+            }
+        }
     } catch (err) {
         console.error('❌ ERREUR déchiffrement - mot de passe incorrect ou données corrompu', err);
         if (peer) peer.send(JSON.stringify({ type: 'auth-response', ok: false, reason: 'bad-password' }));
@@ -2034,12 +2063,94 @@ function handleAuthResponse(data) {
     if (expectedChallengeB64 && data.value === expectedChallengeB64) {
         console.log('✅ Mot de passe vérifié! Démarrage du transfert...');
         authVerified = true;
+        
+        // Initialiser Double Ratchet côté expéditeur (initiator)
+        const peer = getConnectedPeer();
+        if (peer && peer._id && cryptoKey) {
+            try {
+                const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
+                const sharedSecret = new Uint8Array(keyMaterial);
+                const dhPublicKey = await initializeDoubleRatchet(peer._id, sharedSecret, true);
+                
+                // Envoyer notre clé DH publique
+                peer.send(JSON.stringify({
+                    type: 'double-ratchet-init',
+                    dhPublicKey: dhPublicKey
+                }));
+                console.log('🔐 Double Ratchet initialisé côté expéditeur pour', peer._id);
+            } catch (err) {
+                console.error('❌ Erreur init Double Ratchet expéditeur:', err);
+            }
+        }
+        
         startFileTransfer();
     } else {
         console.error('❌ Challenge response invalide');
         showError('Vérification décryptée échouée.');
         peers.forEach(p => p.destroy());
         peers.clear();
+    }
+}
+
+async function handleDoubleRatchetInit(data, fromOdId) {
+    console.log('🔐 Réception double-ratchet-init de', fromOdId);
+    
+    if (!fromOdId || !data.dhPublicKey) {
+        console.error('❌ double-ratchet-init invalide');
+        return;
+    }
+    
+    try {
+        // Compléter le handshake avec leur clé DH publique
+        await completeDoubleRatchetHandshake(fromOdId, data.dhPublicKey);
+        console.log('✅ Double Ratchet handshake complété pour', fromOdId);
+    } catch (err) {
+        console.error('❌ Erreur lors du handshake Double Ratchet:', err);
+    }
+}
+
+async function handleDoubleRatchetMessage(encrypted, fromOdId) {
+    if (!fromOdId || !encrypted.data || !encrypted.dhPublicKey) {
+        console.error('❌ Message Double Ratchet invalide');
+        return;
+    }
+    
+    try {
+        // Déchiffrer le message
+        const decrypted = await receiveMessageWithDoubleRatchet(
+            fromOdId,
+            encrypted.data,
+            encrypted.dhPublicKey
+        );
+        
+        // Convertir en texte et parser le JSON original
+        const decryptedText = new TextDecoder().decode(decrypted);
+        const originalData = JSON.parse(decryptedText);
+        
+        console.log('🔓 Message déchiffré avec Double Ratchet de', fromOdId);
+        
+        // Dispatcher vers le bon handler selon le type
+        switch (originalData.type) {
+            case 'chat-message':
+                handleChatMessage(originalData, fromOdId);
+                break;
+            case 'chat-edit':
+                handleChatEdit(originalData, fromOdId);
+                break;
+            case 'chat-delete':
+                handleChatDelete(originalData);
+                break;
+            case 'chat-reaction':
+                handleChatReaction(originalData);
+                break;
+            case 'chat-typing':
+                handleTypingSignal(originalData, fromOdId);
+                break;
+            default:
+                console.warn('⚠️ Type de message déchiffré non géré:', originalData.type);
+        }
+    } catch (err) {
+        console.error('❌ Erreur déchiffrement Double Ratchet:', err);
     }
 }
 
@@ -2120,6 +2231,12 @@ function handlePeerData(rawData, fromOdId) {
     try {
         const data = JSON.parse(rawData.toString());
         
+        // Détecter et déchiffrer les messages Double Ratchet
+        if (data.type === 'double-ratchet-message') {
+            handleDoubleRatchetMessage(data, fromOdId);
+            return;
+        }
+        
         switch (data.type) {
             case 'chat-message':
                 handleChatMessage(data, fromOdId);
@@ -2163,6 +2280,10 @@ function handlePeerData(rawData, fromOdId) {
 
             case 'auth-response':
                 handleAuthResponse(data);
+                break;
+            
+            case 'double-ratchet-init':
+                handleDoubleRatchetInit(data, fromOdId);
                 break;
 
             case 'metadata':
@@ -4121,22 +4242,12 @@ async function sendChatMessage(isReceiverSide) {
     if (!text || !hasConnectedPeer) return;
     
     try {
-        const encoder = new TextEncoder();
-        const plaintext = encoder.encode(text);
-        const iv = window.crypto.getRandomValues(new Uint8Array(12));
-        const cipherBuf = await window.crypto.subtle.encrypt(
-            { name: 'AES-GCM', iv },
-            cryptoKey,
-            plaintext
-        );
-
         // Mode édition : envoyer un patch
         if (editingMessageId) {
             const editPayload = {
                 type: 'chat-edit',
                 messageId: editingMessageId,
-                iv: toBase64(iv),
-                ciphertext: toBase64(new Uint8Array(cipherBuf)),
+                text: text, // Envoi en clair temporairement pour l'édition
                 senderPseudo: userPseudo,
                 timestamp: Date.now()
             };
@@ -4160,8 +4271,7 @@ async function sendChatMessage(isReceiverSide) {
             type: 'chat-message',
             messageId,
             replyToId: replyToMessageId,
-            iv: toBase64(iv),
-            ciphertext: toBase64(new Uint8Array(cipherBuf)),
+            text: text, // Le texte sera chiffré par Double Ratchet
             senderPseudo: userPseudo,
             timestamp: Date.now()
         };
@@ -4198,17 +4308,30 @@ async function sendChatMessage(isReceiverSide) {
 
 async function handleChatMessage(data, fromOdId) {
     try {
-        const iv = fromBase64(data.iv);
-        const ciphertext = fromBase64(data.ciphertext);
+        // Le message est déjà déchiffré si passé par handleDoubleRatchetMessage
+        // Sinon c'est un ancien format avec iv/ciphertext
+        let text;
         
-        const decrypted = await window.crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv },
-            cryptoKey,
-            ciphertext
-        );
-        
-        const decoder = new TextDecoder();
-        const text = decoder.decode(decrypted);
+        if (data.text) {
+            // Nouveau format: texte déjà déchiffré par Double Ratchet
+            text = data.text;
+        } else if (data.iv && data.ciphertext) {
+            // Ancien format: déchiffrer avec AES-GCM (compatibilité)
+            const iv = fromBase64(data.iv);
+            const ciphertext = fromBase64(data.ciphertext);
+            
+            const decrypted = await window.crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv },
+                cryptoKey,
+                ciphertext
+            );
+            
+            const decoder = new TextDecoder();
+            text = decoder.decode(decrypted);
+        } else {
+            console.error('❌ Format de message invalide');
+            return;
+        }
         
         // Récupérer le pseudo de l'expéditeur
         const senderPseudo = data.senderPseudo || participants.get(fromOdId)?.pseudo || 'Anonyme';
@@ -4236,7 +4359,7 @@ async function handleChatMessage(data, fromOdId) {
         
         console.log('💬 Message reçu de', senderPseudo);
     } catch (err) {
-        console.error('❌ Erreur déchiffrement message:', err);
+        console.error('❌ Erreur traitement message:', err);
     }
 }
 
@@ -4619,14 +4742,26 @@ function handleTypingSignal(data, fromOdId) {
 
 async function handleChatEdit(data, fromOdId) {
     try {
-        const iv = fromBase64(data.iv);
-        const ciphertext = fromBase64(data.ciphertext);
-        const decrypted = await window.crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv },
-            cryptoKey,
-            ciphertext
-        );
-        const text = new TextDecoder().decode(decrypted);
+        let text;
+        
+        if (data.text) {
+            // Nouveau format: déjà déchiffré
+            text = data.text;
+        } else if (data.iv && data.ciphertext) {
+            // Ancien format: déchiffrer avec AES-GCM
+            const iv = fromBase64(data.iv);
+            const ciphertext = fromBase64(data.ciphertext);
+            const decrypted = await window.crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv },
+                cryptoKey,
+                ciphertext
+            );
+            text = new TextDecoder().decode(decrypted);
+        } else {
+            console.error('❌ Format d\'édition invalide');
+            return;
+        }
+        
         const msg = findMessageById(data.messageId);
         if (msg) {
             msg.text = text;
