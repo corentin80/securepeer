@@ -811,10 +811,12 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
                     keyPair: dhKeyPair,
                     publicKeyB64: dhPublicKeyB64,
                     theirPublicKeyB64: null, // À remplir quand on reçoit leur clé
-                    numberUsed: 0
+                    numberUsed: 0,
+                    lastRatchetTime: Date.now() // Timer pour rotation 30min
                 },
                 skippedKeys: new Map(), // Map<"odId:msgNum", {key: Uint8Array(32), timestamp, expiry}>
-                skippedKeysMaxAge: 1000 * 60 * 60 // 1 heure
+                skippedKeysMaxAge: 1000 * 60 * 60, // 1 heure
+                dhRatchetMaxAge: 1000 * 60 * 30 // 30 minutes
             };
         } else {
             // Non-initiateur : recvChain actif, sendChain inactif (attend clé publique du pair)
@@ -833,10 +835,12 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
                     keyPair: dhKeyPair,
                     publicKeyB64: dhPublicKeyB64,
                     theirPublicKeyB64: null,
-                    numberUsed: 0
+                    numberUsed: 0,
+                    lastRatchetTime: Date.now() // Timer pour rotation 30min
                 },
                 skippedKeys: new Map(),
-                skippedKeysMaxAge: 1000 * 60 * 60
+                skippedKeysMaxAge: 1000 * 60 * 60,
+                dhRatchetMaxAge: 1000 * 60 * 30 // 30 minutes
             };
         }
         
@@ -891,6 +895,9 @@ async function completeDoubleRatchetHandshake(odId, theirPublicKeyB64) {
         if (!state.recvChain.active && state.recvChain.messageNumber === 0) {
             state.recvChain.active = true;
         }
+        
+        // Réinitialiser le timer DH ratchet après handshake
+        state.dhRatchet.lastRatchetTime = Date.now();
         
         console.log('✅ Handshake Double Ratchet complété pour', odId);
         
@@ -1003,10 +1010,12 @@ async function sendMessageWithDoubleRatchet(odId, plaintext) {
         // Encoder header avec numéro de message
         const headerEncrypted = await encryptMessageHeader(state, encryptedMessage);
         
-        // DH Ratchet: tous les 100 messages, renouveler la paire ECDH
+        // DH Ratchet: tous les 100 messages OU après 30 minutes
         state.sendChain.messageNumber++;
-        if (state.sendChain.messageNumber % 100 === 0) {
+        const timeSinceLastRatchet = Date.now() - state.dhRatchet.lastRatchetTime;
+        if (state.sendChain.messageNumber % 100 === 0 || timeSinceLastRatchet > state.dhRatchetMaxAge) {
             await performDHRatchet(state);
+            console.log(`🔄 DH Ratchet déclenché (${timeSinceLastRatchet > state.dhRatchetMaxAge ? 'timer 30min' : '100 messages'})`);
         }
         
         // Résultat : Buffer contenant le message chiffré complet
@@ -1224,6 +1233,7 @@ async function performDHRatchet(state) {
         state.dhRatchet.keyPair = newKeyPair;
         state.dhRatchet.publicKeyB64 = newPublicKeyB64;
         state.dhRatchet.numberUsed = state.sendChain.messageNumber;
+        state.dhRatchet.lastRatchetTime = Date.now(); // Réinitialiser le timer
         
         console.log('🔄 DH Ratchet effectué | Nouvelle clé DH:', newPublicKeyB64.substring(0, 10) + '...');
         
