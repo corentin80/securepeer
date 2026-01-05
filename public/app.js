@@ -800,7 +800,8 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
                 rootKey,
                 sendChain: {
                     chainKey: initialChainKey,
-                    messageNumber: 0
+                    messageNumber: 0,
+                    active: true // Initiateur: sendChain actif
                 },
                 recvChain: {
                     chainKey: initialChainKey,
@@ -1175,8 +1176,77 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
             console.warn('⚠️ Impossible déchiffrer avec chaîne actuelle, essai skipped keys buffer...');
             
             // Essayer avec les skipped keys
-            // TODO: Implémenter la vérification des skipped keys
-            throw new Error('Déchiffrement avec skipped keys non encore implémenté');
+            // Extraire messageNumber du header
+            const headerCiphertext = rest.slice(0, 85);
+            let headerDecryptedForNum;
+            
+            try {
+                const chainKey = state.recvChain.chainKey;
+                const headerHmac = await window.crypto.subtle.importKey(
+                    'raw',
+                    chainKey,
+                    { name: 'HMAC', hash: 'SHA-256' },
+                    false,
+                    ['sign']
+                );
+                
+                const headerKey = new Uint8Array(await window.crypto.subtle.sign(
+                    'HMAC',
+                    headerHmac,
+                    new TextEncoder().encode('header')
+                ));
+                
+                const headerKeyImported = await window.crypto.subtle.importKey(
+                    'raw',
+                    headerKey,
+                    { name: 'AES-GCM', length: 256 },
+                    false,
+                    ['decrypt']
+                );
+                
+                headerDecryptedForNum = new Uint8Array(await window.crypto.subtle.decrypt(
+                    { name: 'AES-GCM', iv: headerIV },
+                    headerKeyImported,
+                    headerCiphertext
+                ));
+                
+                const messageNumber = new DataView(headerDecryptedForNum.buffer).getUint32(0, false);
+                const keyId = odId + ':' + messageNumber;
+                
+                // Chercher dans skipped keys
+                if (state.skippedKeys.has(keyId)) {
+                    const skippedKeyEntry = state.skippedKeys.get(keyId);
+                    const skippedMessageKey = skippedKeyEntry.key;
+                    
+                    const messageIV = messageCiphertext.slice(0, 12);
+                    const messageCipherOnly = messageCiphertext.slice(12);
+                    
+                    const messageKeyImported = await window.crypto.subtle.importKey(
+                        'raw',
+                        skippedMessageKey,
+                        { name: 'AES-GCM', length: 256 },
+                        false,
+                        ['decrypt']
+                    );
+                    
+                    plaintext = new Uint8Array(await window.crypto.subtle.decrypt(
+                        { name: 'AES-GCM', iv: messageIV },
+                        messageKeyImported,
+                        messageCipherOnly
+                    ));
+                    
+                    // Zeroize et delete la clé utilisée
+                    skippedKeyEntry.key.fill(0);
+                    state.skippedKeys.delete(keyId);
+                    
+                    console.log('✅ Message déchiffré avec skipped key:', messageNumber);
+                } else {
+                    throw new Error('Clé sautée non trouvée dans le buffer');
+                }
+            } catch (innerErr) {
+                console.error('❌ Erreur avec skipped keys:', innerErr.message);
+                throw err; // Throw original error
+            }
         }
         
         // Nettoyer les clés expirées
