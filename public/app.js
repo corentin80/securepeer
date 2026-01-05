@@ -642,6 +642,632 @@ function handleECDHPublicKey(fromOdId, publicKeyB64) {
     }
 }
 
+// ===== DOUBLE RATCHET (Signal Protocol Post-Quantum) =====
+
+/**
+ * État du Double Ratchet par paire de peers
+ * Chaque conversation peer↔peer a son propre ratchet
+ */
+let doubleRatchetState = new Map(); // Map<odId, {rootKey, sendChain, recvChain, dhRatchet, skippedKeys}>
+
+/**
+ * Structure du ratchet pour une paire de peers:
+ * {
+ *   rootKey: Uint8Array(32), // Root key dérivée d'ECDH initial
+ *   sendChain: { chainKey: Uint8Array(32), messageNumber: number },
+ *   recvChain: { chainKey: Uint8Array(32), messageNumber: number },
+ *   dhRatchet: { 
+ *     keyPair: { privateKey, publicKey },
+ *     publicKeyB64: string,
+ *     theirPublicKeyB64: string,
+ *     numberUsed: number
+ *   },
+ *   skippedKeys: Map<string, {key: Uint8Array(32), timestamp}>  // Map<"odId:msgNum", ...>
+ * }
+ */
+
+/**
+ * HKDF-SHA256 selon RFC 5869
+ * Expanded du rootKey en chaînes de ratcheting
+ */
+async function hkdfExpand(prk, info, length) {
+    const hash = 'SHA-256';
+    const hashLen = 32; // SHA-256 = 32 bytes
+    
+    // Nombre d'itérations N = ceil(L / HashLen)
+    const N = Math.ceil(length / hashLen);
+    let okm = new Uint8Array();
+    let t = new Uint8Array();
+    
+    for (let i = 1; i <= N; i++) {
+        // T(i) = HMAC-Hash(PRK, T(i-1) | info | i)
+        const concat = new Uint8Array(t.length + info.length + 1);
+        concat.set(t);
+        concat.set(info, t.length);
+        concat[concat.length - 1] = i;
+        
+        t = new Uint8Array(await window.crypto.subtle.sign(
+            { name: 'HMAC', hash },
+            await window.crypto.subtle.importKey('raw', prk, { name: 'HMAC', hash }, false, ['sign']),
+            concat
+        ));
+        
+        okm = new Uint8Array([...okm, ...t]);
+    }
+    
+    // Retourner les L premiers bytes
+    return okm.slice(0, length);
+}
+
+/**
+ * HKDF Extract selon RFC 5869
+ * Dérive un PRK depuis le secret partagé
+ */
+async function hkdfExtract(salt, ikm) {
+    const hash = 'SHA-256';
+    
+    if (!salt || salt.length === 0) {
+        salt = new Uint8Array(32); // Zeros
+    }
+    
+    return new Uint8Array(await window.crypto.subtle.sign(
+        { name: 'HMAC', hash },
+        await window.crypto.subtle.importKey('raw', salt, { name: 'HMAC', hash }, false, ['sign']),
+        ikm
+    ));
+}
+
+/**
+ * KDF_RK: Dérive une nouvelle rootKey et une chainKey initiale
+ * Utilisé quand le DH ratchet tourne (nouveau ECDH)
+ */
+async function kdfRK(rootKey, dhSecret) {
+    const salt = new TextEncoder().encode('KDF_RK');
+    const info = new TextEncoder().encode('Double Ratchet Root Key');
+    
+    const prk = await hkdfExtract(rootKey, dhSecret);
+    const expanded = await hkdfExpand(prk, info, 64); // 64 bytes = 32 pour RK + 32 pour CK
+    
+    return {
+        rootKey: expanded.slice(0, 32),
+        chainKey: expanded.slice(32, 64)
+    };
+}
+
+/**
+ * KDF_CK: Avance la chaîne (symmetric ratchet)
+ * Utilisé à chaque message envoyé/reçu
+ */
+async function kdfCK(chainKey) {
+    const hmacKey = await window.crypto.subtle.importKey(
+        'raw',
+        chainKey,
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    );
+    
+    // Nouvelle chainKey = HMAC-SHA256(chainKey, 0x01)
+    const newCK = new Uint8Array(await window.crypto.subtle.sign(
+        'HMAC',
+        hmacKey,
+        new Uint8Array([0x01])
+    ));
+    
+    // MessageKey = HMAC-SHA256(chainKey, 0x02)
+    const messageKey = new Uint8Array(await window.crypto.subtle.sign(
+        'HMAC',
+        hmacKey,
+        new Uint8Array([0x02])
+    ));
+    
+    return { newCK, messageKey };
+}
+
+/**
+ * Initialise le Double Ratchet avec X3DH complet
+ * @param {string} odId - ID du peer
+ * @param {Uint8Array} sharedSecret - Secret d'ECDH initial (256 bits)
+ * @param {boolean} isInitiator - True si tu es l'initiateur (détermine qui envoie en premier)
+ */
+async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
+    try {
+        // Dériver rootKey initial depuis le secret partagé ECDH
+        const salt = new TextEncoder().encode('SecurePeer-X3DH-Salt');
+        const info = new TextEncoder().encode('SecurePeer-Double-Ratchet-Initialization');
+        
+        const prk = await hkdfExtract(salt, sharedSecret);
+        const expanded = await hkdfExpand(prk, info, 96); // 96 bytes = 32 RK + 32 CK + 32 reserved
+        
+        const rootKey = expanded.slice(0, 32);
+        const initialChainKey = expanded.slice(32, 64);
+        
+        // Générer une nouvelle paire DH pour le ratchet
+        const dhKeyPair = await window.crypto.subtle.generateKey(
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true,
+            ['deriveKey', 'deriveBits']
+        );
+        
+        const dhPublicKeyRaw = await window.crypto.subtle.exportKey('raw', dhKeyPair.publicKey);
+        const dhPublicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(dhPublicKeyRaw)));
+        
+        // Initialiser le ratchet selon si tu es initiateur ou non
+        let state;
+        if (isInitiator) {
+            // Initiateur : sendChain actif, recvChain inactif (attend clé publique du pair)
+            state = {
+                rootKey,
+                sendChain: {
+                    chainKey: initialChainKey,
+                    messageNumber: 0
+                },
+                recvChain: {
+                    chainKey: initialChainKey,
+                    messageNumber: 0,
+                    active: false // N'activera que quand on reçoit la clé DH du pair
+                },
+                dhRatchet: {
+                    keyPair: dhKeyPair,
+                    publicKeyB64: dhPublicKeyB64,
+                    theirPublicKeyB64: null, // À remplir quand on reçoit leur clé
+                    numberUsed: 0
+                },
+                skippedKeys: new Map(), // Map<"odId:msgNum", {key: Uint8Array(32), timestamp, expiry}>
+                skippedKeysMaxAge: 1000 * 60 * 60 // 1 heure
+            };
+        } else {
+            // Non-initiateur : recvChain actif, sendChain inactif (attend clé publique du pair)
+            state = {
+                rootKey,
+                sendChain: {
+                    chainKey: initialChainKey,
+                    messageNumber: 0,
+                    active: false // N'activera que quand on reçoit la clé DH du pair
+                },
+                recvChain: {
+                    chainKey: initialChainKey,
+                    messageNumber: 0
+                },
+                dhRatchet: {
+                    keyPair: dhKeyPair,
+                    publicKeyB64: dhPublicKeyB64,
+                    theirPublicKeyB64: null,
+                    numberUsed: 0
+                },
+                skippedKeys: new Map(),
+                skippedKeysMaxAge: 1000 * 60 * 60
+            };
+        }
+        
+        doubleRatchetState.set(odId, state);
+        
+        console.log('🔐 Double Ratchet initialisé pour', odId, '| Initiateur:', isInitiator);
+        return dhPublicKeyB64;
+        
+    } catch (err) {
+        console.error('❌ Erreur initialisation Double Ratchet:', err);
+        throw err;
+    }
+}
+
+/**
+ * Complète l'initialisation du DH Ratchet quand on reçoit la clé publique du pair
+ */
+async function completeDoubleRatchetHandshake(odId, theirPublicKeyB64) {
+    try {
+        const state = doubleRatchetState.get(odId);
+        if (!state) {
+            throw new Error('Double Ratchet non initialisé pour ' + odId);
+        }
+        
+        // Stocker leur clé publique DH
+        state.dhRatchet.theirPublicKeyB64 = theirPublicKeyB64;
+        
+        // Dériver le secret partagé avec leur clé DH
+        const theirPublicKeyRaw = Uint8Array.from(atob(theirPublicKeyB64), c => c.charCodeAt(0));
+        const theirPublicKey = await window.crypto.subtle.importKey(
+            'raw',
+            theirPublicKeyRaw,
+            { name: 'ECDH', namedCurve: 'P-256' },
+            false,
+            []
+        );
+        
+        const sharedBits = await window.crypto.subtle.deriveBits(
+            { name: 'ECDH', public: theirPublicKey },
+            state.dhRatchet.keyPair.privateKey,
+            256
+        );
+        
+        // Dériver nouvelle rootKey + initChainKey
+        const result = await kdfRK(state.rootKey, new Uint8Array(sharedBits));
+        state.rootKey = result.rootKey;
+        
+        // Activer les chaînes si elles ne sont pas encore actives
+        if (!state.sendChain.active && state.sendChain.messageNumber === 0) {
+            state.sendChain.active = true;
+        }
+        if (!state.recvChain.active && state.recvChain.messageNumber === 0) {
+            state.recvChain.active = true;
+        }
+        
+        console.log('✅ Handshake Double Ratchet complété pour', odId);
+        
+    } catch (err) {
+        console.error('❌ Erreur handshake Double Ratchet:', err);
+        throw err;
+    }
+}
+
+/**
+ * Encode un message avec header chiffré
+ * Header = encryptedHeader(messageNumber || dhPublicKey)
+ */
+async function encryptMessageHeader(state, plaintext) {
+    try {
+        // Dériver une clé de header depuis la chainKey actuelle
+        const chainKey = state.sendChain.chainKey;
+        const headerHmac = await window.crypto.subtle.importKey(
+            'raw',
+            chainKey,
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        
+        const headerKey = new Uint8Array(await window.crypto.subtle.sign(
+            'HMAC',
+            headerHmac,
+            new TextEncoder().encode('header')
+        ));
+        
+        // Header = messageNumber (4 bytes) || dhPublicKey (65 bytes) || padding
+        const msgNum = state.sendChain.messageNumber;
+        const msgNumBytes = new Uint8Array(4);
+        new DataView(msgNumBytes.buffer).setUint32(0, msgNum, false);
+        
+        const dhPublicKeyRaw = Uint8Array.from(atob(state.dhRatchet.publicKeyB64), c => c.charCodeAt(0));
+        const headerPlain = new Uint8Array([...msgNumBytes, ...dhPublicKeyRaw]);
+        
+        // Chiffrer le header avec AES-GCM
+        const headerIV = window.crypto.getRandomValues(new Uint8Array(12));
+        const headerKey_imported = await window.crypto.subtle.importKey(
+            'raw',
+            headerKey,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt']
+        );
+        
+        const headerEncrypted = new Uint8Array(await window.crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv: headerIV },
+            headerKey_imported,
+            headerPlain
+        ));
+        
+        // Format final : IV(12) || encryptedHeader || plaintext
+        const result = new Uint8Array(headerIV.length + headerEncrypted.length + plaintext.length);
+        result.set(headerIV);
+        result.set(headerEncrypted, headerIV.length);
+        result.set(plaintext, headerIV.length + headerEncrypted.length);
+        
+        return result;
+        
+    } catch (err) {
+        console.error('❌ Erreur chiffrement header:', err);
+        throw err;
+    }
+}
+
+/**
+ * Envoie un message avec Double Ratchet
+ * Effectue le ratcheting symétrique et DH automatiquement
+ */
+async function sendMessageWithDoubleRatchet(odId, plaintext) {
+    try {
+        const state = doubleRatchetState.get(odId);
+        if (!state) {
+            throw new Error('Double Ratchet non initialisé pour ' + odId);
+        }
+        
+        if (!state.sendChain.active) {
+            throw new Error('Send chain pas encore active (handshake incomplet)');
+        }
+        
+        // Avancer la chaîne symétrique
+        const { newCK, messageKey } = await kdfCK(state.sendChain.chainKey);
+        state.sendChain.chainKey = newCK;
+        
+        // Chiffrer le plaintext avec le messageKey
+        const messageKeyImported = await window.crypto.subtle.importKey(
+            'raw',
+            messageKey,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt']
+        );
+        
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const ciphertext = new Uint8Array(await window.crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv },
+            messageKeyImported,
+            plaintext
+        ));
+        
+        // Combiner IV + ciphertext
+        const encryptedMessage = new Uint8Array(iv.length + ciphertext.length);
+        encryptedMessage.set(iv);
+        encryptedMessage.set(ciphertext, iv.length);
+        
+        // Encoder header avec numéro de message
+        const headerEncrypted = await encryptMessageHeader(state, encryptedMessage);
+        
+        // DH Ratchet: tous les 100 messages, renouveler la paire ECDH
+        state.sendChain.messageNumber++;
+        if (state.sendChain.messageNumber % 100 === 0) {
+            await performDHRatchet(state);
+        }
+        
+        // Résultat : Buffer contenant le message chiffré complet
+        return {
+            type: 'double-ratchet-message',
+            odId: odId,
+            data: btoa(String.fromCharCode(...headerEncrypted)),
+            messageNumber: state.sendChain.messageNumber - 1, // Pour reference
+            dhPublicKey: state.dhRatchet.publicKeyB64
+        };
+        
+    } catch (err) {
+        console.error('❌ Erreur send Double Ratchet:', err);
+        throw err;
+    }
+}
+
+/**
+ * Reçoit et déchiffre un message avec Double Ratchet
+ */
+async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderDHPublicKeyB64) {
+    try {
+        const state = doubleRatchetState.get(odId);
+        if (!state) {
+            throw new Error('Double Ratchet non initialisé pour ' + odId);
+        }
+        
+        const headerEncrypted = Uint8Array.from(atob(headerEncryptedB64), c => c.charCodeAt(0));
+        
+        // Extraire IV et messages
+        const headerIV = headerEncrypted.slice(0, 12);
+        const rest = headerEncrypted.slice(12);
+        
+        // Essayer de déchiffrer le header avec la recvChain courante
+        let plaintext = null;
+        let headerDecrypted = null;
+        
+        try {
+            // Dériver la clé de header depuis la recvChain
+            const chainKey = state.recvChain.chainKey;
+            const headerHmac = await window.crypto.subtle.importKey(
+                'raw',
+                chainKey,
+                { name: 'HMAC', hash: 'SHA-256' },
+                false,
+                ['sign']
+            );
+            
+            const headerKey = new Uint8Array(await window.crypto.subtle.sign(
+                'HMAC',
+                headerHmac,
+                new TextEncoder().encode('header')
+            ));
+            
+            const headerKeyImported = await window.crypto.subtle.importKey(
+                'raw',
+                headerKey,
+                { name: 'AES-GCM', length: 256 },
+                false,
+                ['decrypt']
+            );
+            
+            // Chiffré = 69 bytes (4 msg num + 65 DH public)
+            const headerCiphertext = rest.slice(0, 85); // 69 + GCM tag (16)
+            const messageCiphertext = rest.slice(85);
+            
+            headerDecrypted = new Uint8Array(await window.crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: headerIV },
+                headerKeyImported,
+                headerCiphertext
+            ));
+            
+            // Extraire messageNumber et leur DH public key
+            const messageNumber = new DataView(headerDecrypted.buffer).getUint32(0, false);
+            const theirPublicKeyRaw = headerDecrypted.slice(4, 69);
+            const theirPublicKeyB64 = btoa(String.fromCharCode(...theirPublicKeyRaw));
+            
+            // Si leur clé DH a changé, effectuer DH ratchet
+            if (state.dhRatchet.theirPublicKeyB64 && theirPublicKeyB64 !== state.dhRatchet.theirPublicKeyB64) {
+                console.log('🔄 DH Ratchet détecté (leur clé a changé)');
+                
+                // Calculer skipped keys pour les messages entre ancien et nouveau numéro
+                const oldRecvNum = state.recvChain.messageNumber;
+                const newRecvNum = messageNumber;
+                
+                // Stocker les clés sautées (max 100)
+                for (let i = oldRecvNum; i < newRecvNum && i < oldRecvNum + 100; i++) {
+                    const { newCK, messageKey } = await kdfCK(state.recvChain.chainKey);
+                    state.recvChain.chainKey = newCK;
+                    const keyId = odId + ':' + i;
+                    state.skippedKeys.set(keyId, {
+                        key: messageKey,
+                        timestamp: Date.now(),
+                        expiry: Date.now() + state.skippedKeysMaxAge
+                    });
+                }
+                
+                // Effectuer le DH ratchet
+                state.dhRatchet.theirPublicKeyB64 = theirPublicKeyB64;
+                const theirPublicKey = await window.crypto.subtle.importKey(
+                    'raw',
+                    theirPublicKeyRaw,
+                    { name: 'ECDH', namedCurve: 'P-256' },
+                    false,
+                    []
+                );
+                
+                const sharedBits = await window.crypto.subtle.deriveBits(
+                    { name: 'ECDH', public: theirPublicKey },
+                    state.dhRatchet.keyPair.privateKey,
+                    256
+                );
+                
+                // Dériver new rootKey
+                const kdfResult = await kdfRK(state.rootKey, new Uint8Array(sharedBits));
+                state.rootKey = kdfResult.rootKey;
+                state.recvChain.chainKey = kdfResult.chainKey;
+                state.recvChain.messageNumber = 0;
+            }
+            
+            // Avancer recvChain jusqu'au numéro du message
+            for (let i = state.recvChain.messageNumber; i < messageNumber; i++) {
+                const { newCK, messageKey } = await kdfCK(state.recvChain.chainKey);
+                state.recvChain.chainKey = newCK;
+                const keyId = odId + ':' + i;
+                state.skippedKeys.set(keyId, {
+                    key: messageKey,
+                    timestamp: Date.now(),
+                    expiry: Date.now() + state.skippedKeysMaxAge
+                });
+            }
+            
+            // Avancer un dernier coup pour le message courant
+            const { newCK, messageKey } = await kdfCK(state.recvChain.chainKey);
+            state.recvChain.chainKey = newCK;
+            state.recvChain.messageNumber = messageNumber + 1;
+            
+            // Déchiffrer le message avec le messageKey
+            const messageIV = messageCiphertext.slice(0, 12);
+            const messageCipherOnly = messageCiphertext.slice(12);
+            
+            const messageKeyImported = await window.crypto.subtle.importKey(
+                'raw',
+                messageKey,
+                { name: 'AES-GCM', length: 256 },
+                false,
+                ['decrypt']
+            );
+            
+            plaintext = new Uint8Array(await window.crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: messageIV },
+                messageKeyImported,
+                messageCipherOnly
+            ));
+            
+        } catch (err) {
+            console.warn('⚠️ Impossible déchiffrer avec chaîne actuelle, essai skipped keys buffer...');
+            
+            // Essayer avec les skipped keys
+            // TODO: Implémenter la vérification des skipped keys
+            throw new Error('Déchiffrement avec skipped keys non encore implémenté');
+        }
+        
+        // Nettoyer les clés expirées
+        cleanupSkippedKeys(state);
+        
+        return plaintext;
+        
+    } catch (err) {
+        console.error('❌ Erreur receive Double Ratchet:', err);
+        throw err;
+    }
+}
+
+/**
+ * Effectue le DH Ratchet: renouvelle la paire ECDH
+ */
+async function performDHRatchet(state) {
+    try {
+        // Générer une nouvelle paire ECDH
+        const newKeyPair = await window.crypto.subtle.generateKey(
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true,
+            ['deriveKey', 'deriveBits']
+        );
+        
+        const newPublicKeyRaw = await window.crypto.subtle.exportKey('raw', newKeyPair.publicKey);
+        const newPublicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(newPublicKeyRaw)));
+        
+        // Dériver le secret avec leur dernière clé publique
+        if (state.dhRatchet.theirPublicKeyB64) {
+            const theirPublicKeyRaw = Uint8Array.from(atob(state.dhRatchet.theirPublicKeyB64), c => c.charCodeAt(0));
+            const theirPublicKey = await window.crypto.subtle.importKey(
+                'raw',
+                theirPublicKeyRaw,
+                { name: 'ECDH', namedCurve: 'P-256' },
+                false,
+                []
+            );
+            
+            const sharedBits = await window.crypto.subtle.deriveBits(
+                { name: 'ECDH', public: theirPublicKey },
+                state.dhRatchet.keyPair.privateKey,
+                256
+            );
+            
+            // Dériver new rootKey + initChainKey
+            const result = await kdfRK(state.rootKey, new Uint8Array(sharedBits));
+            state.rootKey = result.rootKey;
+            state.sendChain.chainKey = result.chainKey;
+            state.sendChain.messageNumber = 0;
+        }
+        
+        // Mettre à jour la paire ECDH
+        state.dhRatchet.keyPair = newKeyPair;
+        state.dhRatchet.publicKeyB64 = newPublicKeyB64;
+        state.dhRatchet.numberUsed = state.sendChain.messageNumber;
+        
+        console.log('🔄 DH Ratchet effectué | Nouvelle clé DH:', newPublicKeyB64.substring(0, 10) + '...');
+        
+    } catch (err) {
+        console.error('❌ Erreur DH Ratchet:', err);
+        throw err;
+    }
+}
+
+/**
+ * Nettoie les clés sautées expirées
+ */
+function cleanupSkippedKeys(state) {
+    const now = Date.now();
+    for (const [keyId, entry] of state.skippedKeys.entries()) {
+        if (entry.expiry < now) {
+            // Zeroize la clé avant suppression
+            entry.key.fill(0);
+            state.skippedKeys.delete(keyId);
+        }
+    }
+}
+
+/**
+ * Zeroize complète l'état du ratchet (logout)
+ */
+function zeroizeDoubleRatchet(odId) {
+    const state = doubleRatchetState.get(odId);
+    if (!state) return;
+    
+    // Zeroize toutes les clés
+    if (state.rootKey) state.rootKey.fill(0);
+    if (state.sendChain.chainKey) state.sendChain.chainKey.fill(0);
+    if (state.recvChain.chainKey) state.recvChain.chainKey.fill(0);
+    
+    // Zeroize les clés sautées
+    for (const [_, entry] of state.skippedKeys.entries()) {
+        entry.key.fill(0);
+    }
+    
+    doubleRatchetState.delete(odId);
+    console.log('🔐 Double Ratchet zéroisé pour', odId);
+}
+
 // ===== WEBSOCKET =====
 
 function connectWebSocket() {
