@@ -853,8 +853,8 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
         
         doubleRatchetState.set(odId, state);
         
-        // Double Ratchet initialisé
-        return dhPublicKeyB64;
+        // Retourner la clé publique DH en Uint8Array
+        return new Uint8Array(dhPublicKeyRaw);
         
     } catch (err) {
         console.error('❌ Erreur initialisation Double Ratchet:', err);
