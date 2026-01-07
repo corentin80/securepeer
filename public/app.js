@@ -3324,6 +3324,13 @@ function handleHashConnection(hash) {
             if (sectionHeader) sectionHeader.textContent = '💬 Chat P2P sécurisé';
             if (sectionDesc) sectionDesc.textContent = 'Conversation chiffrée de bout en bout';
             if (elements.receiverStatus) elements.receiverStatus.textContent = 'Connexion au chat...';
+            // Cacher la zone de drop pour le mode chat
+            if (elements.dropZone) elements.dropZone.classList.add('hidden');
+            // Cacher les infos fichier
+            const fileInfo = document.getElementById('file-info');
+            if (fileInfo) fileInfo.classList.add('hidden');
+            // Cacher le bouton d'envoi de fichier
+            if (elements.sendFileBtn) elements.sendFileBtn.classList.add('hidden');
             // NE PAS afficher receiverBothFileSection pour le mode chat simple
         } else if (sessionMode === 'both') {
             if (elements.receiverBothFileSection) elements.receiverBothFileSection.classList.remove('hidden');
@@ -3331,9 +3338,15 @@ function handleHashConnection(hash) {
             if (sectionDesc) sectionDesc.textContent = 'Discutez et échangez des fichiers en temps réel';
             const incomingFileInfo = document.getElementById('incoming-file-info');
             if (incomingFileInfo) incomingFileInfo.classList.add('hidden');
+            // Cacher la drop zone pour le mode both aussi (fichiers via zone latérale)
+            if (elements.dropZone) elements.dropZone.classList.add('hidden');
+            if (elements.sendFileBtn) elements.sendFileBtn.classList.add('hidden');
         } else if (sessionMode === 'file') {
             if (sectionHeader) sectionHeader.textContent = '📥 Réception de fichier';
             if (sectionDesc) sectionDesc.textContent = 'Préparez-vous à recevoir un fichier';
+            // Cacher la drop zone en mode file côté receiver (on reçoit, on n'envoie pas)
+            if (elements.dropZone) elements.dropZone.classList.add('hidden');
+            if (elements.sendFileBtn) elements.sendFileBtn.classList.add('hidden');
         }
 
         connectWebSocket();
@@ -3363,6 +3376,15 @@ function handleHashConnection(hash) {
             if (incomingFileInfo) incomingFileInfo.classList.add('hidden');
             if (sectionHeader) sectionHeader.textContent = '💬 Chat P2P sécurisé';
             if (sectionDesc) sectionDesc.textContent = 'Conversation chiffrée de bout en bout';
+            // Cacher la zone de drop pour le mode chat
+            if (elements.dropZone) elements.dropZone.classList.add('hidden');
+            // Cacher le bloc password (déjà appliqué si ECDH)
+            if (elements.passwordBlock) elements.passwordBlock.classList.add('hidden');
+            // Cacher les infos fichier
+            const fileInfo = document.getElementById('file-info');
+            if (fileInfo) fileInfo.classList.add('hidden');
+            // Cacher le bouton d'envoi de fichier
+            if (elements.sendFileBtn) elements.sendFileBtn.classList.add('hidden');
             // NE PAS afficher receiverBothFileSection pour le mode chat simple
         } else if (sessionMode === 'both') {
             if (elements.receiverBothFileSection) elements.receiverBothFileSection.classList.remove('hidden');
@@ -3406,6 +3428,11 @@ function handleHashConnection(hash) {
             if (sectionHeader) sectionHeader.textContent = '💬 Chat P2P sécurisé';
             if (sectionDesc) sectionDesc.textContent = 'Conversation chiffrée de bout en bout';
             if (elements.receiverStatus) elements.receiverStatus.textContent = 'Connexion au chat...';
+            // Cacher la zone de drop pour le mode chat
+            if (elements.dropZone) elements.dropZone.classList.add('hidden');
+            const fileInfo = document.getElementById('file-info');
+            if (fileInfo) fileInfo.classList.add('hidden');
+            if (elements.sendFileBtn) elements.sendFileBtn.classList.add('hidden');
             // NE PAS afficher receiverBothFileSection pour le mode chat simple
         } else if (sessionMode === 'both') {
             if (elements.receiverBothFileSection) elements.receiverBothFileSection.classList.remove('hidden');
@@ -3413,9 +3440,13 @@ function handleHashConnection(hash) {
             if (sectionDesc) sectionDesc.textContent = 'Discutez et échangez des fichiers en temps réel';
             const incomingFileInfo = document.getElementById('incoming-file-info');
             if (incomingFileInfo) incomingFileInfo.classList.add('hidden');
+            if (elements.dropZone) elements.dropZone.classList.add('hidden');
+            if (elements.sendFileBtn) elements.sendFileBtn.classList.add('hidden');
         } else if (sessionMode === 'file') {
             if (sectionHeader) sectionHeader.textContent = '📥 Réception de fichier';
             if (sectionDesc) sectionDesc.textContent = 'Préparez-vous à recevoir un fichier';
+            if (elements.dropZone) elements.dropZone.classList.add('hidden');
+            if (elements.sendFileBtn) elements.sendFileBtn.classList.add('hidden');
         }
 
         importKeyFromBase64(keyString).then(() => {
