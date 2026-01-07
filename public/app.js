@@ -1507,6 +1507,32 @@ function handleWebSocketMessage(data) {
                 });
                 connectedCount = participants.size;
                 console.log(`👥 ${connectedCount} participant(s) déjà dans la room`);
+                
+                // Si on recharge (doubleRatchetState vide), réinit complète
+                if (cryptoKey && connectedCount > 0 && doubleRatchetState.size === 0) {
+                    console.log('🔄 Réinitialisation Double Ratchet après reload créateur...');
+                    (async () => {
+                        try {
+                            const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
+                            const sharedSecret = new Uint8Array(keyMaterial);
+                            
+                            for (const [odId, info] of participants.entries()) {
+                                // Créateur = toujours initiateur
+                                const dhPublicKey = await initializeDoubleRatchet(odId, sharedSecret, true);
+                                console.log('🔐 Double Ratchet réinitialisé (créateur) pour', odId);
+                                
+                                // Envoyer la clé publique DH
+                                ws.send(JSON.stringify({
+                                    type: 'double-ratchet-init',
+                                    to: odId,
+                                    publicKey: Array.from(dhPublicKey)
+                                }));
+                            }
+                        } catch (err) {
+                            console.error('❌ Erreur réinit Double Ratchet créateur:', err);
+                        }
+                    })();
+                }
             }
             updateConnectedUsersDropdown();
             generateShareLink();
