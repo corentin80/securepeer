@@ -581,7 +581,10 @@ async function importECDHKeyPair(exported) {
         ecdhKeyPair = { privateKey, publicKey };
         ecdhPublicKeyB64 = exported.publicKeyB64;
         
-        console.log('🔐 Paire ECDH restaurée depuis localStorage');
+        // Régénérer le fingerprint depuis la clé publique restaurée
+        myFingerprint = await generateFingerprint(ecdhKeyPair.publicKey);
+        
+        console.log('🔐 Paire ECDH restaurée depuis localStorage (fingerprint régénéré)');
         return true;
     } catch (err) {
         console.error('❌ Erreur import ECDH:', err);
