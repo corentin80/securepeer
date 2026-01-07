@@ -80,8 +80,8 @@ let keyExchangeResolvers = new Map(); // Map<odId, {resolve, reject}> - promesse
 
 // ===== SAFETY NUMBERS =====
 let myFingerprint = null; // Mon fingerprint (safety number)
-let peerFingerprints = new Map(); // Map<odId, fingerprint> - fingerprints des pairs
-let previousFingerprints = new Map(); // Map<odId, fingerprint[]> - historique pour détecter changements
+let peerFingerprints = new Map(); // Map<odId, fingerprint> - fingerprints de session actuelle
+let knownFingerprints = new Map(); // Map<pseudo, fingerprint> - fingerprints connus persistants
 
 // ===== ÉLÉMENTS DOM =====
 const elements = {
@@ -705,22 +705,27 @@ async function handleECDHPublicKey(fromOdId, publicKeyB64) {
     try {
         const peerFingerprint = await generateFingerprintFromB64(publicKeyB64);
         
-        // Vérifier si le fingerprint a changé (détection MITM)
-        if (peerFingerprints.has(fromOdId)) {
-            const previousFingerprint = peerFingerprints.get(fromOdId);
-            if (previousFingerprint !== peerFingerprint) {
+        // Récupérer le pseudo de ce peer
+        const participantInfo = participants.get(fromOdId);
+        const pseudo = participantInfo ? participantInfo.pseudo : null;
+        
+        // Vérifier si le fingerprint a changé pour ce PSEUDO (détection MITM)
+        if (pseudo && knownFingerprints.has(pseudo)) {
+            const knownFingerprint = knownFingerprints.get(pseudo);
+            if (knownFingerprint !== peerFingerprint) {
                 // ALERTE SÉCURITÉ: Le fingerprint a changé!
-                console.error('🚨 ALERTE SÉCURITÉ: Fingerprint changé pour', fromOdId);
-                showSecurityAlert(fromOdId, previousFingerprint, peerFingerprint);
-                
-                // Sauvegarder dans l'historique
-                if (!previousFingerprints.has(fromOdId)) {
-                    previousFingerprints.set(fromOdId, []);
-                }
-                previousFingerprints.get(fromOdId).push(previousFingerprint);
+                console.error('🚨 ALERTE SÉCURITÉ: Fingerprint changé pour', pseudo);
+                showSecurityAlert(fromOdId, knownFingerprint, peerFingerprint);
             }
         }
         
+        // Stocker le fingerprint pour ce pseudo
+        if (pseudo) {
+            knownFingerprints.set(pseudo, peerFingerprint);
+            saveKnownFingerprints();
+        }
+        
+        // Stocker aussi par odId pour la session actuelle
         peerFingerprints.set(fromOdId, peerFingerprint);
     } catch (err) {
         console.error('❌ Erreur génération fingerprint peer:', err);
@@ -3130,6 +3135,36 @@ function clearSessionStorage() {
     console.log('🗑️ Session effacée');
 }
 
+// ===== SAFETY NUMBERS - Persistence =====
+
+/**
+ * Charge les fingerprints connus depuis localStorage
+ */
+function loadKnownFingerprints() {
+    try {
+        const stored = localStorage.getItem('securepeer_known_fingerprints');
+        if (stored) {
+            const data = JSON.parse(stored);
+            knownFingerprints = new Map(Object.entries(data));
+            console.log('📂 Fingerprints connus chargés:', knownFingerprints.size);
+        }
+    } catch (err) {
+        console.error('❌ Erreur chargement fingerprints:', err);
+    }
+}
+
+/**
+ * Sauvegarde les fingerprints connus dans localStorage
+ */
+function saveKnownFingerprints() {
+    try {
+        const data = Object.fromEntries(knownFingerprints);
+        localStorage.setItem('securepeer_known_fingerprints', JSON.stringify(data));
+    } catch (err) {
+        console.error('❌ Erreur sauvegarde fingerprints:', err);
+    }
+}
+
 function closeSessionProperly() {
     // Notifier le serveur de la fermeture
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -3982,6 +4017,9 @@ function updateLanguage() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('🚀 [INIT] DOMContentLoaded - Démarrage de l\'application');
+    
+    // Charger les fingerprints connus
+    loadKnownFingerprints();
     
     // Vérifier d'abord si on a un hash (lien de partage)
     const hash = window.location.hash.substring(1);
