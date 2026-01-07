@@ -712,19 +712,26 @@ async function handleECDHPublicKey(fromOdId, publicKeyB64) {
         const participantInfo = participants.get(fromOdId);
         const pseudo = participantInfo ? participantInfo.pseudo : null;
         
-        // Vérifier si le fingerprint a changé pour ce PSEUDO (détection MITM)
-        if (pseudo && knownFingerprints.has(pseudo)) {
-            const knownFingerprint = knownFingerprints.get(pseudo);
+        // Utiliser pseudo_roomId comme clé pour éviter les faux positifs entre rooms différentes
+        const fingerprintKey = pseudo && roomId ? `${pseudo}_${roomId}` : null;
+        
+        // Vérifier si le fingerprint a changé pour ce PSEUDO dans cette ROOM (détection MITM)
+        if (fingerprintKey && knownFingerprints.has(fingerprintKey)) {
+            const knownFingerprint = knownFingerprints.get(fingerprintKey);
             if (knownFingerprint !== peerFingerprint) {
                 // ALERTE SÉCURITÉ: Le fingerprint a changé!
-                console.error('🚨 ALERTE SÉCURITÉ: Fingerprint changé pour', pseudo);
+                console.error('🚨 ALERTE SÉCURITÉ: Fingerprint changé pour', pseudo, 'dans room', roomId);
                 showSecurityAlert(fromOdId, knownFingerprint, peerFingerprint);
+            } else {
+                console.log('✅ Fingerprint vérifié OK pour', pseudo);
             }
+        } else if (fingerprintKey) {
+            console.log('ℹ️ Premier fingerprint enregistré pour', pseudo, 'dans room', roomId);
         }
         
-        // Stocker le fingerprint pour ce pseudo
-        if (pseudo) {
-            knownFingerprints.set(pseudo, peerFingerprint);
+        // Stocker le fingerprint pour ce pseudo dans cette room
+        if (fingerprintKey) {
+            knownFingerprints.set(fingerprintKey, peerFingerprint);
             saveKnownFingerprints();
         }
         
