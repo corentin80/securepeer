@@ -1460,6 +1460,7 @@ function connectWebSocket() {
     
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        console.log('📨 [WS] Message reçu:', data.type, data);
         handleWebSocketMessage(data);
     };
     
