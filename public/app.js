@@ -2195,7 +2195,19 @@ async function handleAuthResponse(data) {
 }
 
 async function handleDoubleRatchetInit(data, fromOdId) {
+    console.log('🔍 [DEBUG] handleDoubleRatchetInit appelé:', {
+        fromOdId, 
+        hasDhPublicKey: !!data.dhPublicKey, 
+        hasCryptoKey: !!cryptoKey,
+        dhPublicKeyLength: data.dhPublicKey?.length
+    });
+    
     if (!fromOdId || !data.dhPublicKey || !cryptoKey) {
+        console.error('❌ [DR Init] Conditions non remplies:', {
+            hasFromOdId: !!fromOdId,
+            hasDhPublicKey: !!data.dhPublicKey,
+            hasCryptoKey: !!cryptoKey
+        });
         return;
     }
     
