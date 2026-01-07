@@ -1527,6 +1527,32 @@ function handleWebSocketMessage(data) {
                 });
                 connectedCount = participants.size;
                 console.log(`👥 ${connectedCount} participant(s) déjà dans la room`);
+                
+                // Réinitialiser le Double Ratchet pour les participants existants si cryptoKey disponible
+                if (cryptoKey && connectedCount > 0) {
+                    (async () => {
+                        try {
+                            const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
+                            const sharedSecret = new Uint8Array(keyMaterial);
+                            
+                            for (const [odId, info] of participants.entries()) {
+                                // Déterminer qui est l'initiateur (le créateur initie toujours)
+                                const amInitiator = isCreator || !info.isCreator;
+                                const dhPublicKey = await initializeDoubleRatchet(odId, sharedSecret, amInitiator);
+                                console.log(`🔐 Double Ratchet réinitialisé pour ${odId} (${amInitiator ? 'initiateur' : 'non-initiateur'})`);
+                                
+                                // Envoyer la clé publique DH
+                                ws.send(JSON.stringify({
+                                    type: 'double-ratchet-init',
+                                    to: odId,
+                                    publicKey: Array.from(dhPublicKey)
+                                }));
+                            }
+                        } catch (err) {
+                            console.error('❌ Erreur réinit Double Ratchet:', err);
+                        }
+                    })();
+                }
             }
             // Toujours mettre à jour le dropdown (même si vide)
             updateConnectedUsersDropdown();
