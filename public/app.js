@@ -3303,6 +3303,8 @@ function handleHashConnection(hash) {
     else if (parts[keyOrPasswordIndex] === 'ecdh') {
         isReceiver = true;
         usePassword = false;
+        passwordRequired = false;
+        passwordSaltB64 = null;
         
         elements.receiverSection.classList.remove('hidden');
         elements.receiverStatus.textContent = 'Échange de clés sécurisé en cours...';
@@ -3333,6 +3335,9 @@ function handleHashConnection(hash) {
         // Lien legacy avec clé incluse (pour rétrocompatibilité)
         const keyString = parts.slice(keyOrPasswordIndex).join('_');
         isReceiver = true;
+        usePassword = false;
+        passwordRequired = false;
+        passwordSaltB64 = null;
 
         elements.receiverSection.classList.remove('hidden');
         showEphemeralBadge();
