@@ -1786,49 +1786,54 @@ function handleWebSocketMessage(data) {
             console.log('🔐 [ECDH] Clé publique reçue de:', data.fromId);
             handleECDHPublicKey(data.fromId, data.publicKeyB64);
             
-            // Si je suis le créateur, dériver la clé et envoyer ma clé publique en retour
-            if (isCreator && ecdhKeyPair && !cryptoKey) {
-                (async () => {
-                    try {
-                        // Dériver la clé AES partagée
-                        await deriveSharedKey(data.publicKeyB64);
-                        console.log('🔐 [ECDH] Clé AES dérivée avec succès (créateur)');
-                        
-                        // Initialiser le Double Ratchet (créateur = initiateur)
-                        if (cryptoKey) {
-                            const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
-                            const sharedSecret = new Uint8Array(keyMaterial);
-                            const dhPublicKey = await initializeDoubleRatchet(data.fromId, sharedSecret, true);
-                            console.log('🔐 Double Ratchet initialisé (créateur) pour', data.fromId);
+            // Si je suis le créateur, dériver la clé pour ce participant
+            if (isCreator && ecdhKeyPair) {
+                // Vérifier si on a déjà un Double Ratchet pour ce participant
+                const needsInit = !doubleRatchetState.has(data.fromId);
+                
+                if (needsInit) {
+                    (async () => {
+                        try {
+                            // Dériver la clé AES partagée
+                            await deriveSharedKey(data.publicKeyB64);
+                            console.log('🔐 [ECDH] Clé AES dérivée avec succès (créateur)');
                             
-                            // Traiter les double-ratchet-init en attente
-                            if (pendingDoubleRatchetInits.has(data.fromId)) {
-                                const pending = pendingDoubleRatchetInits.get(data.fromId);
-                                await completeDoubleRatchetHandshake(data.fromId, pending.dhPublicKey);
-                                pendingDoubleRatchetInits.delete(data.fromId);
-                                console.log('✅ Pending init traité (créateur) pour', data.fromId);
+                            // Initialiser le Double Ratchet (créateur = initiateur)
+                            if (cryptoKey) {
+                                const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
+                                const sharedSecret = new Uint8Array(keyMaterial);
+                                const dhPublicKey = await initializeDoubleRatchet(data.fromId, sharedSecret, true);
+                                console.log('🔐 Double Ratchet initialisé (créateur) pour', data.fromId);
+                                
+                                // Traiter les double-ratchet-init en attente
+                                if (pendingDoubleRatchetInits.has(data.fromId)) {
+                                    const pending = pendingDoubleRatchetInits.get(data.fromId);
+                                    await completeDoubleRatchetHandshake(data.fromId, pending.dhPublicKey);
+                                    pendingDoubleRatchetInits.delete(data.fromId);
+                                    console.log('✅ Pending init traité (créateur) pour', data.fromId);
+                                }
+                                
+                                // Envoyer la clé publique DH via signaling
+                                ws.send(JSON.stringify({
+                                    type: 'double-ratchet-init',
+                                    to: data.fromId,
+                                    publicKey: Array.from(dhPublicKey)
+                                }));
+                            } else {
+                                console.error('❌ cryptoKey null après deriveSharedKey (créateur)!');
                             }
                             
-                            // Envoyer la clé publique DH via signaling
-                            ws.send(JSON.stringify({
-                                type: 'double-ratchet-init',
-                                to: data.fromId,
-                                publicKey: Array.from(dhPublicKey)
-                            }));
-                        } else {
-                            console.error('❌ cryptoKey null après deriveSharedKey (créateur)!');
+                            // Envoyer ma clé publique en retour
+                            sendECDHPublicKey(data.fromId);
+                            
+                            // Sauvegarder la session avec la nouvelle clé
+                            saveSessionToStorage();
+                        } catch (err) {
+                            console.error('❌ [ECDH] Erreur dérivation clé:', err);
+                            showError('Erreur lors de l\'échange de clés sécurisé.');
                         }
-                        
-                        // Envoyer ma clé publique en retour
-                        sendECDHPublicKey(data.fromId);
-                        
-                        // Sauvegarder la session avec la nouvelle clé
-                        saveSessionToStorage();
-                    } catch (err) {
-                        console.error('❌ [ECDH] Erreur dérivation clé:', err);
-                        showError('Erreur lors de l\'échange de clés sécurisé.');
-                    }
-                })();
+                    })();
+                }
             }
             // Si je suis receiver et que j'attends une clé
             else if (isReceiver && ecdhKeyPair && !cryptoKey) {
