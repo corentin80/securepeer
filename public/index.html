@@ -234,14 +234,6 @@
                     En attente du destinataire...
                 </p>
                 
-                <!-- Dropdown pour les pseudos connectés -->
-                <div class="connected-users-section hidden" id="connected-users-section">
-                    <label for="connected-users-dropdown">👥</label>
-                    <select id="connected-users-dropdown" class="connected-users-dropdown">
-                        <option disabled selected>Connectés</option>
-                    </select>
-                </div>
-                
                 <!-- Contrôles de session -->
                 <div class="session-controls">
                     <button id="lock-session-btn" class="btn btn-secondary lock-session-btn" title="Bloquer les nouveaux participants">🔒 Verrouiller</button>
@@ -260,6 +252,12 @@
                         <button class="chat-tool-btn" id="chat-export-btn" title="Exporter la conversation">📥</button>
                         <button class="chat-tool-btn" id="chat-ephemeral-toggle" title="Messages éphémères">⏱️</button>
                         <button class="chat-tool-btn" id="verify-identity-btn" title="Vérifier l'identité">🔐</button>
+                    </div>
+                    <!-- Dropdown pour les pseudos connectés (dans le header) -->
+                    <div class="connected-users-section hidden" id="connected-users-section">
+                        <select id="connected-users-dropdown" class="connected-users-dropdown">
+                            <option disabled selected>👥 Connectés</option>
+                        </select>
                     </div>
                 </div>
                 <!-- Barre de recherche -->
@@ -304,88 +302,8 @@
             </div>
         </section>
 
-        <!-- MODE DESTINATAIRE -->
-        <section id="receiver-section" class="section hidden">
-            <div class="receiver-info">
-                <h2 id="receiver-title">📥 Réception de fichier</h2>
-
-                <div id="receiver-password-block" class="password-block hidden">
-                    <label for="receiver-password">Mot de passe requis</label>
-                    <input type="password" id="receiver-password" placeholder="Entrez le mot de passe partagé">
-                    <button id="receiver-password-apply" class="btn btn-primary">Déverrouiller</button>
-                    <p class="hint">Le mot de passe reste sur cet appareil et dérive la clé de chiffrement.</p>
-                </div>
-
-                <div id="incoming-file-info" class="incoming-file-info">
-                    <div class="file-icon large">📄</div>
-                    <p id="incoming-file-name" class="file-name"></p>
-                    <p id="incoming-file-size" class="file-size"></p>
-                </div>
-                <button id="receive-file-btn" class="btn btn-primary hidden">📥 Recevoir le fichier</button>
-                <p id="receiver-status" class="status">Connexion en cours...</p>
-            </div>
-
-            <!-- Zone de Chat côté destinataire -->
-            <div id="receiver-chat-section" class="chat-section hidden">
-                <div class="chat-header">
-                    <h3>💬 Chat sécurisé</h3>
-                    <span class="chat-status" id="receiver-chat-status">Connecté</span>
-                    <div class="chat-tools">
-                        <button class="chat-tool-btn" id="receiver-chat-search-toggle" title="Rechercher">🔍</button>
-                        <button class="chat-tool-btn" id="receiver-chat-pins-toggle" title="Messages épinglés">📌</button>
-                        <button class="chat-tool-btn" id="receiver-chat-export-btn" title="Exporter la conversation">📥</button>
-                        <button class="chat-tool-btn" id="receiver-chat-ephemeral-toggle" title="Messages éphémères">⏱️</button>
-                        <button class="chat-tool-btn" id="receiver-verify-identity-btn" title="Vérifier l'identité">🔐</button>
-                    </div>
-                    <!-- Dropdown pour les pseudos connectés (receiver) - dans le header -->
-                    <div class="connected-users-section hidden" id="receiver-connected-users-section">
-                        <label for="receiver-connected-users-dropdown">👥</label>
-                        <select id="receiver-connected-users-dropdown" class="connected-users-dropdown">
-                            <option disabled selected>Connectés</option>
-                        </select>
-                    </div>
-                </div>
-                <!-- Barre de recherche -->
-                <div class="chat-search-bar hidden" id="receiver-chat-search-bar">
-                    <input type="text" id="receiver-chat-search-input" placeholder="Rechercher un message...">
-                    <select id="receiver-chat-search-user-filter" title="Filtrer par utilisateur" aria-label="Filtrer par utilisateur">
-                        <option value="">Tous les utilisateurs</option>
-                    </select>
-                    <button class="btn btn-small" id="receiver-chat-search-clear">✕</button>
-                    <span class="search-results-count" id="receiver-chat-search-count"></span>
-                </div>
-                <!-- Messages épinglés -->
-                <div class="chat-pinned-section hidden" id="receiver-chat-pinned-section">
-                    <div class="pinned-header">📌 Messages épinglés</div>
-                    <div class="pinned-messages-list" id="receiver-chat-pinned-list"></div>
-                </div>
-                <div class="chat-messages" id="receiver-chat-messages">
-                    <!-- Messages dynamiques -->
-                </div>
-                <div class="chat-input-container">
-                    <input type="text" id="receiver-chat-input" placeholder="Tapez votre message..." autocomplete="off">
-                    <button id="receiver-chat-send" class="btn btn-primary">Envoyer</button>
-                </div>
-                <button id="close-receiver-session" class="btn btn-primary btn-close-session">🚪 Fermer la session</button>
-            </div>
-            
-            <!-- Zone de fichiers pour mode both (côté destinataire) -->
-            <div id="receiver-both-file-section" class="both-file-section hidden">
-                <div class="both-file-header">
-                    <h4>📁 Fichiers</h4>
-                </div>
-                <div id="receiver-both-file-list" class="both-file-list">
-                    <!-- Liste des fichiers reçus/envoyés -->
-                </div>
-                <div class="both-file-input">
-                    <label class="btn btn-small btn-file-select">
-                        <input type="file" id="receiver-both-file-input" hidden multiple>
-                        📎 Ajouter
-                    </label>
-                    <button id="receiver-both-file-send" class="btn btn-primary btn-small" disabled>📤 Envoyer</button>
-                </div>
-            </div>
-        </section>
+        <!-- MODE DESTINATAIRE - Redirige maintenant vers la session unifiée -->
+        <!-- Supprimé: utilise maintenant les mêmes sections que le créateur -->
 
         <!-- BARRE DE PROGRESSION (commune) -->
         <section id="progress-section" class="section hidden">
