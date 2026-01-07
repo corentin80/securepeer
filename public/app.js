@@ -2193,7 +2193,19 @@ async function handleDoubleRatchetInit(data, fromOdId) {
         return;
     }
     
-    // Si déjà initialisé, c'est un reload de l'autre côté → réinitialiser
+    const state = doubleRatchetState.get(fromOdId);
+    
+    // Si on n'a pas encore leur clé publique, c'est la réponse à notre init
+    if (!state.dhRatchet.theirPublicKeyB64) {
+        try {
+            await completeDoubleRatchetHandshake(fromOdId, data.dhPublicKey);
+        } catch (err) {
+            console.error('❌ Handshake Double Ratchet:', err.message);
+        }
+        return;
+    }
+    
+    // Sinon c'est un reload de l'autre côté → réinitialiser complètement
     try {
         // Anti-boucle: ne pas renvoyer si on a déjà répondu récemment (< 5s)
         const lastSent = lastDoubleRatchetInitSent.get(fromOdId) || 0;
