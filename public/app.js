@@ -1537,8 +1537,9 @@ function handleWebSocketMessage(data) {
                 connectedCount = participants.size;
                 console.log(`👥 ${connectedCount} participant(s) déjà dans la room`);
                 
-                // Si on recharge (doubleRatchetState vide), demander réinit complète
+                // Si on recharge (doubleRatchetState vide), réinit complète
                 if (cryptoKey && connectedCount > 0 && doubleRatchetState.size === 0) {
+                    console.log('🔄 Réinitialisation Double Ratchet après reload...');
                     (async () => {
                         try {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
@@ -1548,6 +1549,7 @@ function handleWebSocketMessage(data) {
                                 // Réinitialiser localement
                                 const amInitiator = isCreator || !info.isCreator;
                                 const dhPublicKey = await initializeDoubleRatchet(odId, sharedSecret, amInitiator);
+                                console.log('🔐 Double Ratchet réinitialisé pour', odId);
                                 
                                 // Envoyer la clé publique DH
                                 ws.send(JSON.stringify({
@@ -1560,6 +1562,8 @@ function handleWebSocketMessage(data) {
                             console.error('❌ Erreur réinit Double Ratchet:', err);
                         }
                     })();
+                } else {
+                    console.log('⏭️ Skip réinit Double Ratchet:', { hasCryptoKey: !!cryptoKey, connectedCount, doubleRatchetStateSize: doubleRatchetState.size });
                 }
             }
             // Toujours mettre à jour le dropdown (même si vide)
