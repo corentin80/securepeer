@@ -2042,7 +2042,7 @@ async function handleAuthChallenge(data, fromOdId) {
     }
 }
 
-function handleAuthResponse(data) {
+async function handleAuthResponse(data) {
     // Côté expéditeur
     console.log('🔏 handleAuthResponse reçue:', data);
     
