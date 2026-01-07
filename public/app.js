@@ -3572,17 +3572,20 @@ function setupLanguageSelector() {
     const languageToggle = document.getElementById('language-toggle');
     const languageMenu = document.getElementById('language-menu');
     
+    console.log('🌐 setupLanguageSelector called');
+    console.log('   languageToggle:', languageToggle);
+    console.log('   languageMenu:', languageMenu);
+    
     if (!languageToggle || !languageMenu) {
-        console.log('Language elements not found');
+        console.error('❌ Language elements not found');
         return;
     }
     
     languageToggle.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const isHidden = languageMenu.classList.contains('hidden');
         languageMenu.classList.toggle('hidden');
-        console.log('Menu toggled:', !isHidden);
+        console.log('🌐 Menu toggled, hidden:', languageMenu.classList.contains('hidden'));
     });
     
     // Fermer le menu au clic ailleurs
@@ -3593,15 +3596,21 @@ function setupLanguageSelector() {
     });
     
     // Sélection de langue
-    document.querySelectorAll('.lang-option').forEach(btn => {
+    const langOptions = document.querySelectorAll('.lang-option');
+    console.log('   langOptions found:', langOptions.length);
+    
+    langOptions.forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            setLanguage(btn.dataset.lang);
+            const lang = btn.dataset.lang;
+            console.log('🌐 Language clicked:', lang);
+            setLanguage(lang);
             languageMenu.classList.add('hidden');
-            console.log('Language set to:', btn.dataset.lang);
         });
     });
+    
+    console.log('✅ Language selector setup complete');
 }
 
 // ===== GESTION DES LANGUES =====
