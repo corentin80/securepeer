@@ -58,8 +58,9 @@ let chatSearchUserFilter = '';
 let pinnedMessageIds = new Set(); // IDs des messages épinglés
 
 // Messages éphémères
-let ephemeralMode = false;
+let ephemeralMode = true; // Activé par défaut pour la sécurité
 let ephemeralDuration = 30; // secondes par défaut
+let ephemeralCountdowns = new Map(); // Map<messageId, intervalId> - timers de countdown
 
 // Session security options
 let sessionOptions = {
@@ -80,6 +81,7 @@ let keyExchangeResolvers = new Map(); // Map<odId, {resolve, reject}> - promesse
 // ===== SAFETY NUMBERS =====
 let myFingerprint = null; // Mon fingerprint (safety number)
 let peerFingerprints = new Map(); // Map<odId, fingerprint> - fingerprints des pairs
+let previousFingerprints = new Map(); // Map<odId, fingerprint[]> - historique pour détecter changements
 
 // ===== ÉLÉMENTS DOM =====
 const elements = {
@@ -702,6 +704,23 @@ async function handleECDHPublicKey(fromOdId, publicKeyB64) {
     // Générer et stocker le fingerprint du pair
     try {
         const peerFingerprint = await generateFingerprintFromB64(publicKeyB64);
+        
+        // Vérifier si le fingerprint a changé (détection MITM)
+        if (peerFingerprints.has(fromOdId)) {
+            const previousFingerprint = peerFingerprints.get(fromOdId);
+            if (previousFingerprint !== peerFingerprint) {
+                // ALERTE SÉCURITÉ: Le fingerprint a changé!
+                console.error('🚨 ALERTE SÉCURITÉ: Fingerprint changé pour', fromOdId);
+                showSecurityAlert(fromOdId, previousFingerprint, peerFingerprint);
+                
+                // Sauvegarder dans l'historique
+                if (!previousFingerprints.has(fromOdId)) {
+                    previousFingerprints.set(fromOdId, []);
+                }
+                previousFingerprints.get(fromOdId).push(previousFingerprint);
+            }
+        }
+        
         peerFingerprints.set(fromOdId, peerFingerprint);
     } catch (err) {
         console.error('❌ Erreur génération fingerprint peer:', err);
@@ -4514,13 +4533,15 @@ async function sendChatMessage(isReceiverSide) {
         }
 
         const messageId = generateMessageId();
+        const now = Date.now();
         const messageData = {
             type: 'chat-message',
             messageId,
             replyToId: replyToMessageId,
             text: text, // Le texte sera chiffré par Double Ratchet
             senderPseudo: userPseudo,
-            timestamp: Date.now()
+            timestamp: now,
+            ephemeralDuration: ephemeralMode ? ephemeralDuration : null
         };
         broadcastToAllPeers(messageData);
 
@@ -4530,12 +4551,13 @@ async function sendChatMessage(isReceiverSide) {
             text,
             isSent: true,
             pseudo: userPseudo,
-            timestamp: Date.now(),
+            timestamp: now,
             replyToId: replyToMessageId,
             edited: false,
             deleted: false,
             reactions: {},
-            ephemeral: ephemeralMode ? ephemeralDuration : null
+            ephemeral: ephemeralMode ? ephemeralDuration : null,
+            ephemeralExpiry: ephemeralMode ? now + (ephemeralDuration * 1000) : null
         });
         inputEl.value = '';
         clearReplyEditState(isReceiverSide);
@@ -4585,22 +4607,27 @@ async function handleChatMessage(data, fromOdId) {
         const messagesEl = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
         
         const messageId = data.messageId || generateMessageId();
+        const now = Date.now();
+        const ephemeralDur = data.ephemeralDuration || (ephemeralMode ? ephemeralDuration : null);
+        
         chatMessages.push({
             id: messageId,
             text,
             isSent: false,
             pseudo: senderPseudo,
-            timestamp: data.timestamp || Date.now(),
+            timestamp: data.timestamp || now,
             replyToId: data.replyToId || null,
             edited: false,
             deleted: false,
             reactions: {},
-            ephemeral: ephemeralMode ? ephemeralDuration : null
+            ephemeral: ephemeralDur,
+            ephemeralExpiry: ephemeralDur ? now + (ephemeralDur * 1000) : null
         });
         renderChatMessages(messagesEl);
         
         // Programmer la suppression si éphémère
-        if (ephemeralMode) {
+        if (ephemeralDur) {
+            scheduleMessageDeletion(messageId, ephemeralDur);
             scheduleMessageDeletion(messageId, ephemeralDuration);
         }
         
@@ -4756,7 +4783,7 @@ function renderChatMessages(containerEl) {
             }
         }
 
-        // Footer avec timestamp
+        // Footer avec timestamp et countdown éphémère
         const footer = document.createElement('div');
         footer.className = 'message-meta';
         
@@ -4764,6 +4791,20 @@ function renderChatMessages(containerEl) {
         timeEl.className = 'message-time';
         timeEl.textContent = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         footer.appendChild(timeEl);
+        
+        // Countdown éphémère si activé et message pas encore expiré
+        if (msg.ephemeralExpiry && !msg.deleted) {
+            const countdownEl = document.createElement('span');
+            countdownEl.className = 'ephemeral-countdown';
+            countdownEl.dataset.messageId = msg.id;
+            countdownEl.style.marginLeft = '8px';
+            countdownEl.style.color = '#ff6b6b';
+            countdownEl.style.fontWeight = 'bold';
+            footer.appendChild(countdownEl);
+            
+            // Mettre à jour le countdown immédiatement
+            updateEphemeralCountdown(msg.id, msg.ephemeralExpiry, countdownEl);
+        }
         
         msgBubble.appendChild(footer);
         msgWrapper.appendChild(msgBubble);
@@ -5616,6 +5657,30 @@ function showEphemeralDialog() {
         ephemeralMode = enabled;
         ephemeralDuration = duration;
         
+        // Warning si désactivé
+        if (!enabled) {
+            const warningHtml = `
+                <div class="export-content modal-card" style="border: 2px solid #ffc107;">
+                    <button class="modal-close" aria-label="Fermer">×</button>
+                    <div class="modal-header" style="background: #fff3cd;">
+                        <div class="modal-icon">⚠️</div>
+                        <div>
+                            <h3>Messages éphémères désactivés</h3>
+                            <p class="modal-subtitle">Vos messages ne seront plus automatiquement supprimés</p>
+                        </div>
+                    </div>
+                    <div style="padding: 20px;">
+                        <p>Les messages persisteront dans le navigateur jusqu'à ce que vous fermiez la session.</p>
+                        <p style="margin-top: 10px;"><strong>Pour une sécurité maximale, nous recommandons de garder les messages éphémères activés.</strong></p>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-primary">Compris</button>
+                    </div>
+                </div>
+            `;
+            setTimeout(() => openChatModal(warningHtml), 500);
+        }
+        
         // Synchroniser avec les autres
         broadcastToAllPeers({
             type: 'chat-ephemeral-sync',
@@ -5751,6 +5816,86 @@ function showSafetyNumbersModal() {
     }
 }
 
+/**
+ * Affiche une alerte de sécurité critique quand le fingerprint change
+ */
+function showSecurityAlert(odId, oldFingerprint, newFingerprint) {
+    const participantInfo = participants.get(odId);
+    const pseudo = participantInfo ? participantInfo.pseudo : odId;
+    
+    const alertHtml = `
+        <div class="export-content modal-card" style="border: 3px solid #dc3545;">
+            <button class="modal-close" aria-label="Fermer">×</button>
+            <div class="modal-header" style="background: #dc3545; color: white;">
+                <div class="modal-icon">🚨</div>
+                <div>
+                    <h3>ALERTE SÉCURITÉ</h3>
+                    <p class="modal-subtitle">Changement de clé détecté</p>
+                </div>
+            </div>
+            <div style="padding: 20px;">
+                <p style="margin-bottom: 15px;"><strong>Le numéro de sécurité de ${pseudo} a changé.</strong></p>
+                
+                <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #ffc107;">
+                    <strong>⚠️ Cela peut signifier:</strong>
+                    <ul style="margin: 10px 0 0 20px;">
+                        <li>Votre correspondant a réinstallé l'application</li>
+                        <li>Quelqu'un intercepte vos messages (MITM)</li>
+                    </ul>
+                </div>
+                
+                <div style="margin: 15px 0;">
+                    <p><strong>Ancien numéro:</strong></p>
+                    <div style="font-family: monospace; font-size: 12px; padding: 10px; background: #f5f5f5; border-radius: 4px; margin: 5px 0;">
+                        ${oldFingerprint}
+                    </div>
+                </div>
+                
+                <div style="margin: 15px 0;">
+                    <p><strong>Nouveau numéro:</strong></p>
+                    <div style="font-family: monospace; font-size: 12px; padding: 10px; background: #f5f5f5; border-radius: 4px; margin: 5px 0;">
+                        ${newFingerprint}
+                    </div>
+                </div>
+                
+                <div style="background: #f8d7da; padding: 15px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #dc3545;">
+                    <strong>🛡️ Recommandation:</strong> Vérifiez avec votre correspondant par téléphone ou en personne que ce changement est légitime avant de continuer à échanger des informations sensibles.
+                </div>
+            </div>
+        </div>
+    `;
+    
+    openChatModal(alertHtml);
+}
+
+/**
+ * Met à jour le countdown visuel d'un message éphémère
+ */
+function updateEphemeralCountdown(messageId, expiryTime, countdownEl) {
+    const updateCountdown = () => {
+        const now = Date.now();
+        const remaining = Math.max(0, Math.ceil((expiryTime - now) / 1000));
+        
+        if (remaining > 0) {
+            countdownEl.textContent = `⏱️ ${remaining}s`;
+            countdownEl.style.color = remaining <= 10 ? '#dc3545' : '#ff6b6b';
+        } else {
+            countdownEl.textContent = '💨';
+        }
+    };
+    
+    // Mettre à jour immédiatement
+    updateCountdown();
+    
+    // Mettre à jour chaque seconde
+    if (ephemeralCountdowns.has(messageId)) {
+        clearInterval(ephemeralCountdowns.get(messageId));
+    }
+    
+    const intervalId = setInterval(updateCountdown, 1000);
+    ephemeralCountdowns.set(messageId, intervalId);
+}
+
 function scheduleMessageDeletion(messageId, delay) {
     if (!ephemeralMode) return;
     
@@ -5759,6 +5904,13 @@ function scheduleMessageDeletion(messageId, delay) {
         if (msg && !msg.deleted) {
             msg.deleted = true;
             msg.text = '💨 Message éphémère expiré';
+            
+            // Nettoyer le countdown
+            if (ephemeralCountdowns.has(messageId)) {
+                clearInterval(ephemeralCountdowns.get(messageId));
+                ephemeralCountdowns.delete(messageId);
+            }
+            
             const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
             renderChatMessages(container);
         }
