@@ -1850,8 +1850,10 @@ function handleWebSocketMessage(data) {
                             console.log('🔐 Double Ratchet initialisé (receiver) pour', data.fromId);
                             
                             // Traiter les double-ratchet-init en attente
+                            console.log('🔍 [DEBUG] Vérif pending pour', data.fromId, '- hasPending:', pendingDoubleRatchetInits.has(data.fromId));
                             if (pendingDoubleRatchetInits.has(data.fromId)) {
                                 const pending = pendingDoubleRatchetInits.get(data.fromId);
+                                console.log('🔄 [DR] Traitement du message bufferisé pour', data.fromId);
                                 await completeDoubleRatchetHandshake(data.fromId, pending.dhPublicKey);
                                 pendingDoubleRatchetInits.delete(data.fromId);
                                 console.log('✅ Pending init traité pour', data.fromId);
@@ -2202,17 +2204,21 @@ async function handleDoubleRatchetInit(data, fromOdId) {
         dhPublicKeyLength: data.dhPublicKey?.length
     });
     
-    if (!fromOdId || !data.dhPublicKey || !cryptoKey) {
-        console.error('❌ [DR Init] Conditions non remplies:', {
-            hasFromOdId: !!fromOdId,
-            hasDhPublicKey: !!data.dhPublicKey,
-            hasCryptoKey: !!cryptoKey
-        });
+    if (!fromOdId || !data.dhPublicKey) {
+        console.error('❌ [DR Init] fromOdId ou dhPublicKey manquant');
         return;
     }
     
-    // Si le Double Ratchet n'est pas encore initialisé, bufferiser
+    // Si cryptoKey n'est pas encore disponible, bufferiser et attendre
+    if (!cryptoKey) {
+        console.log('⏳ [DR Init] cryptoKey pas encore disponible, buffering pour', fromOdId);
+        pendingDoubleRatchetInits.set(fromOdId, { dhPublicKey: data.dhPublicKey });
+        return;
+    }
+    
+    // Si le Double Ratchet n'est pas encore initialisé, bufferiser aussi
     if (!doubleRatchetState.has(fromOdId)) {
+        console.log('⏳ [DR Init] Double Ratchet pas encore init, buffering pour', fromOdId);
         pendingDoubleRatchetInits.set(fromOdId, { dhPublicKey: data.dhPublicKey });
         return;
     }
