@@ -865,19 +865,25 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
 /**
  * Complète l'initialisation du DH Ratchet quand on reçoit la clé publique du pair
  */
-async function completeDoubleRatchetHandshake(odId, theirPublicKeyB64) {
+async function completeDoubleRatchetHandshake(odId, theirPublicKey) {
     try {
         const state = doubleRatchetState.get(odId);
         if (!state) {
             throw new Error('Double Ratchet non initialisé pour ' + odId);
         }
         
-        // Stocker leur clé publique DH
-        state.dhRatchet.theirPublicKeyB64 = theirPublicKeyB64;
+        // Convertir en Uint8Array si c'est un Array
+        let theirPublicKeyRaw;
+        if (Array.isArray(theirPublicKey)) {
+            theirPublicKeyRaw = new Uint8Array(theirPublicKey);
+            state.dhRatchet.theirPublicKeyB64 = btoa(String.fromCharCode(...theirPublicKeyRaw));
+        } else {
+            // C'est une string base64
+            theirPublicKeyRaw = Uint8Array.from(atob(theirPublicKey), c => c.charCodeAt(0));
+            state.dhRatchet.theirPublicKeyB64 = theirPublicKey;
+        }
         
-        // Dériver le secret partagé avec leur clé DH
-        const theirPublicKeyRaw = Uint8Array.from(atob(theirPublicKeyB64), c => c.charCodeAt(0));
-        const theirPublicKey = await window.crypto.subtle.importKey(
+        const theirPublicKeyCrypto = await window.crypto.subtle.importKey(
             'raw',
             theirPublicKeyRaw,
             { name: 'ECDH', namedCurve: 'P-256' },
@@ -886,7 +892,7 @@ async function completeDoubleRatchetHandshake(odId, theirPublicKeyB64) {
         );
         
         const sharedBits = await window.crypto.subtle.deriveBits(
-            { name: 'ECDH', public: theirPublicKey },
+            { name: 'ECDH', public: theirPublicKeyCrypto },
             state.dhRatchet.keyPair.privateKey,
             256
         );
