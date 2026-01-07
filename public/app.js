@@ -1539,18 +1539,17 @@ function handleWebSocketMessage(data) {
                 connectedCount = participants.size;
                 console.log(`👥 ${connectedCount} participant(s) déjà dans la room`);
                 
-                // Réinitialiser le Double Ratchet pour les participants existants si cryptoKey disponible
-                if (cryptoKey && connectedCount > 0) {
+                // Si on recharge (doubleRatchetState vide), demander réinit complète
+                if (cryptoKey && connectedCount > 0 && doubleRatchetState.size === 0) {
                     (async () => {
                         try {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                             const sharedSecret = new Uint8Array(keyMaterial);
                             
                             for (const [odId, info] of participants.entries()) {
-                                // Déterminer qui est l'initiateur (le créateur initie toujours)
+                                // Réinitialiser localement
                                 const amInitiator = isCreator || !info.isCreator;
                                 const dhPublicKey = await initializeDoubleRatchet(odId, sharedSecret, amInitiator);
-                                console.log(`🔐 Double Ratchet réinitialisé pour ${odId} (${amInitiator ? 'initiateur' : 'non-initiateur'})`);
                                 
                                 // Envoyer la clé publique DH
                                 ws.send(JSON.stringify({
@@ -2185,6 +2184,35 @@ async function handleDoubleRatchetInit(data, fromOdId) {
     if (!doubleRatchetState.has(fromOdId)) {
         pendingDoubleRatchetInits.set(fromOdId, { dhPublicKey: data.dhPublicKey });
         return;
+    }
+    
+    // Si déjà initialisé, c'est une réinitialisation (reload de l'autre côté)
+    // Reset complet et renvoyer notre nouvelle clé
+    if (doubleRatchetState.has(fromOdId) && cryptoKey) {
+        try {
+            // Supprimer l'ancien état
+            doubleRatchetState.delete(fromOdId);
+            
+            // Réinitialiser avec nouvelle clé
+            const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
+            const sharedSecret = new Uint8Array(keyMaterial);
+            const amInitiator = isCreator;
+            const dhPublicKey = await initializeDoubleRatchet(fromOdId, sharedSecret, amInitiator);
+            
+            // Compléter avec leur clé
+            await completeDoubleRatchetHandshake(fromOdId, data.dhPublicKey);
+            
+            // Renvoyer notre clé
+            ws.send(JSON.stringify({
+                type: 'double-ratchet-init',
+                to: fromOdId,
+                publicKey: Array.from(dhPublicKey)
+            }));
+            
+            return;
+        } catch (err) {
+            console.error('❌ Erreur réinit Double Ratchet:', err.message);
+        }
     }
     
     try {
