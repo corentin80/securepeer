@@ -1,338 +1,218 @@
-# SecurePeer Roadmap - 2026 & Beyond
+# SecurePeer Roadmap - MVP Monétisable (6 semaines)
 
-## 🎯 Vision
+## 🎯 Vision Recentrée
 
-Create the **most secure P2P communication platform** combining:
-- Signal Protocol (Double Ratchet) for E2EE
-- Post-Quantum Cryptography (SPQR) for future-proofing
-- Tor Hidden Services for anonymity
-- Sealed Sender for metadata protection
-- Native desktop/mobile apps for better OS integration
+**Hybride P2P + Stockage:** Le seul service de transfert fichiers où même nous ne pouvons pas lire vos données.
 
-**Ultimate Goal:** Make surveillance-resistant communication accessible to journalists, activists, and privacy-conscious users.
+**Positionnement:**
+- P2P direct (gratuit, 100 MB) → **impossible à subpoena**
+- Stockage temporaire chiffré E2E (payant) → **recurring revenue**
+- Pas de concurrence frontale avec Dropbox → **niche privacy-first**
 
----
-
-## 📅 Timeline
-
-### ✅ Phase 1: Double Ratchet Implementation (COMPLETED - Jan 5, 2026)
-
-**What was built:**
-- [x] HKDF-SHA256 (RFC 5869)
-- [x] KDF_RK and KDF_CK primitives
-- [x] Double Ratchet state management
-- [x] Per-peer encryption/decryption
-- [x] Header encryption
-- [x] Skipped keys buffer for out-of-order messages
-- [x] Unit tests (9 test cases)
-- [x] Full documentation (DOUBLE_RATCHET.md)
-
-**Current Code:**
-```
-public/app.js (lines 645-1270): Core Double Ratchet (~625 lines)
-public/double-ratchet-tests.js: Unit tests (~300 lines)
-DOUBLE_RATCHET.md: Specification (60 pages)
-DOUBLE_RATCHET_USAGE.md: Usage guide (40 pages)
-```
-
-**Status:** ✅ **Production Ready** (No Professional Audit)
+**Business Model:**
+- Free: P2P direct, 100 MB max, liens 24h
+- Pro (10€/mois): 5 GB, stockage 30j, analytics
+- Business (25€/user/mois): Illimité, API, domaines custom, compliance
 
 ---
 
-### 🔄 Phase 2: Integration & Testing (Jan 15 - Feb 15, 2026)
+## ✅ Phase 1: Double Ratchet (TERMINÉ - 7 Jan 2026)
 
-**Objectives:**
-- Hook Double Ratchet into WebRTC DataChannels
-- Integrate with chat messaging system
-- Add SAS (Short Authentication String) fingerprint verification
-- End-to-end testing across peers
+**Implémentation complète:**
+- [x] HKDF, KDF_RK, KDF_CK (RFC 5869)
+- [x] DH Ratchet (rotation 100 msg + 30min timer)
+- [x] Symmetric Ratchet (chaînes send/recv séparées)
+- [x] Skipped keys buffer (Map avec expiry 1h)
+- [x] Header encryption (metadata protection)
+- [x] Tests unitaires 9/9 PASS
+- [x] Intégration P2P (chat messages chiffrés)
+- [x] Documentation technique (4 fichiers)
 
-**Tasks:**
-- [ ] Create `WebRTCRatchetedChannel` wrapper class
-  - Intercept all peer.send() calls
-  - Apply Double Ratchet encryption
-  - Decrypt received messages
-  - Handle reconnection scenarios
+**Status:** ✅ **PRODUCTION** - Chat chiffré avec Signal Protocol actif
 
-- [ ] Modify chat message handling
-  - Encrypt message with Double Ratchet before sending
-  - Decrypt received messages
-  - Display encryption status (🔓/🔒)
-
-- [ ] Implement SAS verification UI
-  - Generate 4 emoji SAS from fingerprint
-  - Display on both sides
-  - Manual verification button
-  - Store verified fingerprints locally
-
-- [ ] Test scenarios
-  - Send 100+ messages and verify ratcheting
-  - Out-of-order messages (WebRTC jitter)
-  - Fast message sending (>10/sec)
-  - Peer reconnection scenarios
-  - Browser tab refresh (state loss)
-
-- [ ] Performance benchmarking
-  - Measure latency (target: < 50ms per message)
-  - Memory growth test (target: stable at ~5KB/peer)
-  - CPU usage (target: < 5% per message encrypt)
-
-**Expected Output:**
-- Fully integrated encrypted chat
-- Fingerprint verification working
-- Performance baseline established
+**Note:** X3DH non implémenté (pas nécessaire pour P2P temps réel)
 
 ---
 
-### 🔐 Phase 3: X3DH Implementation (Feb 15 - Mar 31, 2026)
+## 🚀 Phase 2: Sécurité & Trust (Semaines 1-2, ~40h)
 
-**What is X3DH:**
-Extended Triple Diffie-Hellman - more robust initial key agreement than current simple ECDH.
+**Objectif:** Permettre aux utilisateurs de vérifier qu'ils ne sont pas MITM.
 
-**Objectives:**
-- Replace simple ECDH with X3DH
-- Support offline messaging (via pre-keys)
-- Add identity key signatures
-- Implement key rotation schedule
+### 2.1 Safety Numbers (Fingerprint Verification)
+- [ ] 🔴 Générer fingerprint SHA-256 depuis clé publique ECDH ⏱️ 2h
+- [ ] 🔴 Afficher fingerprint dans UI (format lisible 12 groupes) ⏱️ 3h
+- [ ] 🔴 QR code du fingerprint pour scan mobile ⏱️ 2h
+- [ ] 🔴 Bouton "Vérifier identité" → compare côte à côte ⏱️ 2h
+- [ ] 🟡 Warning si fingerprint change (détection MITM) ⏱️ 2h
+- [ ] 🟡 Guide utilisateur: vérifier par appel vocal ⏱️ 2h
 
-**Tasks:**
-- [ ] Generate and manage pre-keys
-  - Signed pre-keys (rotate weekly)
-  - One-time pre-keys (use once, rotate as needed)
-  - Identity keys (long-term, backed up)
+### 2.2 TURN-Only Forcé (Masquage IP)
+- [ ] 🔴 Checkbox UI "Masquer mon IP (forcer relay)" ⏱️ 1h
+- [ ] 🔴 iceTransportPolicy: "relay" côté SimplePeer ⏱️ 2h
+- [ ] 🔴 Filtrer host/srflx candidates avant envoi SDP ⏱️ 3h
+- [ ] 🔴 Tests: vérifier aucun direct candidate ⏱️ 2h
 
-- [ ] X3DH key agreement protocol
-  ```
-  Initial:
-  - Alice: IK_A (identity), EK_A (ephemeral)
-  - Bob: IK_B (identity), SPK_B (signed pre-key), OPK_B (one-time)
-  
-  Key derivation:
-  DH1 = ECDH(IK_A, SPK_B)
-  DH2 = ECDH(EK_A, IK_B)
-  DH3 = ECDH(EK_A, SPK_B)
-  DH4 = ECDH(EK_A, OPK_B)
-  
-  Shared secret = HKDF(DH1 || DH2 || DH3 || DH4)
-  ```
+### 2.3 Messages Éphémères Améliorés
+- [ ] 🟡 Activer par défaut (30s) avec opt-out ⏱️ 1h
+- [ ] 🟡 Indicateur countdown visuel sur messages ⏱️ 2h
+- [ ] 🟡 Warning si désactivé ⏱️ 1h
 
-- [ ] Pre-key upload/management
-  - Batch upload to server on startup
-  - Server marks used OPKs
-  - Automatic re-upload when low
+### 2.4 Tests Sécurité
+- [ ] 🔴 Tests de fuite IP (ipleak.net, browserleaks) ⏱️ 4h
+- [ ] 🟡 ESLint security + Semgrep (SAST) ⏱️ 4h
+- [ ] 🟡 OWASP ZAP sur endpoints (DAST) ⏱️ 6h
+- [ ] 🟡 Fuzzing inputs messages/SDP ⏱️ 4h
 
-- [ ] Session initialization
-  - Skip ECDH if X3DH available
-  - Fall back to X3DH if peer offline
-  - Handle key compromise
-
-- [ ] Tests
-  - X3DH key agreement verification vectors
-  - Pre-key rotation schedule tests
-  - Offline message queuing tests
-
-**Expected Output:**
-- X3DH replaces simple ECDH
-- Offline messaging capability
-- Better defense against compromise
+**Livrable:** Application avec vérification fingerprint + option IP masquée + tests sécu passés
 
 ---
 
-### 🌌 Phase 4: Post-Quantum Readiness (Apr 1 - Jun 30, 2026)
+## 🏗️ Phase 3: Infrastructure Résiliente (Semaines 3-4, ~38h)
 
-**Threat:** Quantum computers (estimated 2030+) can break current ECC
+**Objectif:** Ne pas avoir un single point of failure.
 
-**What is SPQR:**
-Signal Post-Quantum Ratchet - combines classical DH with post-quantum KEX
+### 3.1 Multi-Provider Offshore
+- [ ] 🔴 Déployer signaling sur 2+ VPS (Islande + Suisse) ⏱️ 8h
+- [ ] 🔴 Déployer TURN sur 2+ providers indépendants ⏱️ 8h
+- [ ] 🟡 GeoDNS ou load balancing DNS round-robin ⏱️ 4h
+- [ ] 🔴 Terraform pour IaC reproductible ⏱️ 12h
+- [ ] 🟡 Tests failover: couper un provider → continuité ⏱️ 4h
 
-**Tasks:**
-- [ ] ML-KEM-768 (Kyber) integration
-  - Compile libpqcrystals to WASM
-  - Wrapper for JavaScript
-  - ~1KB ciphertext overhead
+### 3.2 RAM-Only & Ephemeral
+- [ ] 🟡 Sessions en Redis (persistence=off, RAM uniquement) ⏱️ 4h
+- [ ] 🟡 Coturn no-log, RAM allocations ⏱️ 2h
+- [ ] 🟢 Désactiver swap ou chiffrer swap ⏱️ 1h
 
-- [ ] Triple Ratchet architecture
-  ```
-  Old approach (current):
-  DHRatchet: ECDH(cur_dh, their_dh) → new_rootKey
-  
-  New approach (SPQR):
-  DHRatchet: DH(ECDH, ML-KEM) → new_rootKey
-  - Run both algorithms
-  - Mix results: HKDF(DH_result || PQ_result)
-  - Resistant to quantum computers
-  ```
+### 3.3 Monitoring Privacy-Preserving
+- [ ] 🟡 Prometheus: uptime, error rate, latency (agrégés) ⏱️ 6h
+- [ ] 🟡 Alerting email/Signal bot (downtime, error spike) ⏱️ 3h
+- [ ] 🟢 Pas de logs individuels, seulement métriques ⏱️ 1h
+- [ ] 🟡 Dashboard privé (auth HTTPS) pour ops ⏱️ 4h
 
-- [ ] Implementation
-  - Generate PQ keypairs on startup
-  - Exchange in X3DH or periodic ratchet
-  - Use SPQR ratchet every 50 messages (heavier)
-  - Keep classical ratchet for everyday
+### 3.4 CI/CD
+- [ ] 🟡 GitHub Actions: tests auto sur PR ⏱️ 4h
+- [ ] 🟡 Deploy auto staging (push main) ⏱️ 4h
+- [ ] 🟡 Deploy production (tag release) ⏱️ 3h
+- [ ] 🟡 Rollback auto si healthcheck fail ⏱️ 2h
 
-- [ ] Performance optimization
-  - Cache PQ keypairs
-  - Lazy load ML-KEM
-  - Batch PQ operations
-
-- [ ] Testing
-  - Interop with classical Double Ratchet
-  - Performance benchmarks
-  - Recovery from PQ compromise
-
-**Expected Output:**
-- Post-quantum resistant encryption
-- Ready for era of quantum computers
+**Livrable:** Infrastructure multi-region avec failover + monitoring + CI/CD
 
 ---
 
-### 📱 Phase 5: Native Desktop App (Jul 1 - Dec 31, 2026)
+## 💰 Phase 4: Monétisation (Semaines 5-6, ~48h)
 
-**Why native app:**
-- Better security (isolated process)
-- No browser extensions
-- Constant-time crypto (C++)
-- Better UI/UX
-- Offline capability
+**Objectif:** Lancer en beta payante avec recurring revenue.
 
-**Framework: Tauri**
-```
-Frontend: React (reuse current code)
-Backend: Rust (libsignal bindings)
-Crypto: rust-crypto (constant-time)
-Size: ~5MB (vs Electron 100MB+)
-```
+### 4.1 Système Comptes
+- [ ] 🔴 Backend comptes (email hash uniquement) ⏱️ 12h
+- [ ] 🔴 Auth simple (email + code OTP, pas de password) ⏱️ 8h
+- [ ] 🟡 Page profil basique ⏱️ 4h
 
-**Tasks:**
-- [ ] Setup Tauri project
-  - Scaffold React + Rust
-  - Configure build system
-  - Code signing certificates
+### 4.2 Paiement Stripe
+- [ ] 🔴 Intégration Stripe Checkout ⏱️ 8h
+- [ ] 🔴 Webhooks Stripe (subscription created/cancelled) ⏱️ 4h
+- [ ] 🟡 Gestion abonnements (upgrade/downgrade) ⏱️ 6h
 
-- [ ] Migrate crypto to Rust
-  - Benchmark vs JavaScript
-  - Implement libsignal wrapper
-  - Add post-quantum support
+### 4.3 Plans & Quotas
+- [ ] 🔴 Limite gratuit: 100 MB, liens 24h ⏱️ 2h
+- [ ] 🔴 Plan Pro: 5 GB, stockage 30j, analytics ⏱️ 4h
+- [ ] 🔴 Plan Business: illimité, API, domaines custom ⏱️ 4h
+- [ ] 🟡 Enforcement quotas (taille, durée) ⏱️ 6h
 
-- [ ] Implement local database
-  - SQLite for message history
-  - Encrypted at rest with user password
-  - Vacuum & purge old messages
+### 4.4 Dashboard Utilisateur
+- [ ] 🟡 Sessions actives + usage bandwidth ⏱️ 8h
+- [ ] 🟡 Historique transferts (30 derniers jours) ⏱️ 4h
+- [ ] 🟡 Facturation & invoices ⏱️ 4h
 
-- [ ] Native features
-  - System notifications
-  - Tray icon
-  - Keyboard shortcuts
-  - Auto-update mechanism
+### 4.5 Landing & Pricing
+- [ ] 🟡 Page /pricing avec comparaison plans ⏱️ 4h
+- [ ] 🟡 CTA "Essai gratuit 7j" ⏱️ 2h
+- [ ] 🟡 Témoignages utilisateurs (fake it till you make it) ⏱️ 2h
 
-- [ ] Distribution
-  - Windows .exe, macOS .dmg, Linux .AppImage
-  - Code signing (Windows + macOS)
-  - Auto-updater channel
-
-**Expected Output:**
-- Desktop app with better security
-- 50x faster crypto
-- Professional look & feel
+**Livrable:** App avec comptes + paiements Stripe + plans Free/Pro/Business
 
 ---
 
-### 🧅 Phase 6: Tor Integration (Q1 2027)
+## 📚 Phase 5: Documentation & Legal (Semaine 7, ~20h)
 
-**Objectives:**
-- Hide IP address
-- Resist censorship
-- Add Sealed Sender
+**Objectif:** Conformité RGPD + transparence.
 
-**Tasks:**
-- [ ] Migrate server to Tor hidden service
-  - Change VPS to Tor-capable (Debian)
-  - Generate .onion address
-  - Map WebSocket to hidden service
-  - Keep current IP for backward compatibility
+### 5.1 Documentation Utilisateur
+- [ ] 🟢 Guide démarrage rapide (1 page EN/FR) ⏱️ 2h
+- [ ] 🟡 FAQ sécurité (que loggue-t-on, limites) ⏱️ 4h
+- [ ] 🟡 Best practices (vérifier fingerprints) ⏱️ 3h
 
-- [ ] Force Tor for clients
-  - Detect if using Tor Browser
-  - Refuse connections not via Tor
-  - Implement onion routing via Nym
+### 5.2 Documentation Technique
+- [ ] 🟡 Architecture (diagrammes infra + crypto) ⏱️ 4h
+- [ ] 🟡 Threat model (adversaires, mitigations) ⏱️ 4h
 
-- [ ] Sealed Sender implementation
-  - Hide sender identity in messages
-  - Use certificat rotation
-  - Prevent metadata leaks
+### 5.3 Legal & Compliance
+- [ ] 🔴 Privacy Policy détaillée (/privacy) ⏱️ 4h
+- [ ] 🔴 ToS/CGU (disclaimers, limitations) ⏱️ 3h
+- [ ] 🟡 Page /security (architecture, ce qu'on logue pas) ⏱️ 3h
+- [ ] 🟢 Licence MIT open-source ⏱️ 30min
 
-- [ ] Cover traffic
-  - Automatic dummy messages
-  - Padding to constant size
-  - Timing obfuscation
-
-- [ ] Testing
-  - Tor Browser compatibility
-  - Censorship resistance (GFW, UAE)
-  - Timing analysis resistance
-
-**Expected Output:**
-- Complete Tor integration
-- Maximum anonymity
-- Censorship-resistant
+**Livrable:** Site complet avec legal compliance RGPD
 
 ---
 
-### 📱 Phase 7: Mobile Apps (Q2-Q4 2027)
+## 🎯 Phase 6: Launch Beta (Semaine 8)
 
-**Platforms:**
-- iOS (Swift + SwiftUI)
-- Android (Kotlin + Jetpack Compose)
+### 6.1 Pre-Launch
+- [ ] 🔴 Audit sécu externe (pentest basique) ⏱️ Budget 2-5k€
+- [ ] 🟡 Beta privée: 50 early adopters (Product Hunt, HN) ⏱️ -
+- [ ] 🟡 Feedback loop: ajustements UX/pricing ⏱️ -
 
-**Shared Core:**
-- libsignal mobile bindings
-- SQLite for message DB
-- biometric auth (Face ID, fingerprint)
+### 6.2 Launch
+- [ ] 🔴 Product Hunt launch ⏱️ -
+- [ ] 🟡 Post Hacker News "Show HN: SecurePeer" ⏱️ -
+- [ ] 🟡 Twitter/X campaign (privacy advocates) ⏱️ -
+- [ ] 🟡 Email journalistes tech (TechCrunch, Wired) ⏱️ -
 
-**Timeline:**
-- 6 months iOS
-- 6 months Android
-- Parallel development
-
-**Expected Output:**
-- Feature parity with desktop
-- App Store + Play Store release
-- 100k+ installations
+### 6.3 Metrics
+- [ ] Objectif: 100 signups semaine 1
+- [ ] Objectif: 10 paying customers mois 1 (100€ MRR)
+- [ ] Objectif: 50 paying customers mois 3 (500€ MRR)
 
 ---
 
-## 🗺️ Feature Matrix
+## ❌ Roadmap Items SUPPRIMÉS (Overkill/Prématuré)
 
-| Feature | Phase | Browser | Desktop | iOS | Android |
-|---------|-------|---------|---------|-----|---------|
-| Double Ratchet | 1 | ✅ | ✅ | ✅ | ✅ |
-| X3DH | 3 | ✅ | ✅ | ✅ | ✅ |
-| Post-Quantum | 4 | ✅ | ✅ | ✅ | ✅ |
-| Sealed Sender | 6 | ✅ | ✅ | ✅ | ✅ |
-| Tor Hidden Service | 6 | 🟡 | ✅ | 🟡 | 🟡 |
-| Offline Messages | 3 | ✅ | ✅ | ✅ | ✅ |
-| Message History | 5 | 🟡 | ✅ | ✅ | ✅ |
-| File Sharing | 2 | ✅ | ✅ | 🟡 | 🟡 |
-| Voice Calls | 5 | 🟡 | ✅ | 🟡 | 🟡 |
-| Disappearing Messages | 3 | ✅ | ✅ | ✅ | ✅ |
+**Trop niche/complexe:**
+- ❌ X3DH (pas besoin pour P2P temps réel)
+- ❌ TURN en .onion (Tor) - 99% users ne l'utiliseront jamais
+- ❌ Sealed sender - complexité énorme, gain marginal
+- ❌ Padding messages / timing obfuscation
+- ❌ Kill switch automatique / dead man's switch
 
-Legend: ✅ Full support | 🟡 Partial | ❌ No support
+**Trop tôt (faire après traction):**
+- ❌ App mobile native (40h+) - rester web jusqu'à 10k users
+- ❌ PWA offline - pas utile pour P2P temps réel
+- ❌ i18n 5 langues - garder juste EN/FR pour MVP
+- ❌ API REST / SDK - pas de clients API encore
+- ❌ Intégrations Zapier
+- ❌ Kubernetes autoscaling
+
+**Distraction:**
+- ❌ Vidéos tutoriels
+- ❌ Warrant canary (faire après avoir du trafic)
+- ❌ Workshops / conférences
+- ❌ Hacktoberfest
 
 ---
 
-## 💰 Resource Requirements
+## 📊 Estimation Totale MVP
 
-### Development Team
-```
-Core Team (3-4 people):
-- 1 Cryptography Engineer (C++ / Rust)
-- 1 Backend Engineer (Node.js / Rust)
-- 1 Frontend Engineer (React / React Native)
-- 1 Security Auditor (part-time)
-```
+**Temps:** 6-8 semaines (146h dev)  
+**Budget:** 2-5k€ (audit sécu)  
+**Launch:** Mi-Mars 2026
 
-### Infrastructure
-```
-Development:
+**Success Metrics:**
+- 100€ MRR mois 1
+- 500€ MRR mois 3
+- 2000€ MRR mois 6 → rentabilité (VPS + temps dev)
+
+**Pivot si échec:** Si < 50 paying customers après 6 mois → pivoter vers B2B compliance (santé/legal) ou abandonner.
 - GitHub: Free (public repo)
 - CI/CD: GitHub Actions (free)
 
