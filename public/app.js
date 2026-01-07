@@ -77,6 +77,10 @@ let ecdhPublicKeyB64 = null; // Ma clé publique en base64 pour partage
 let pendingKeyExchanges = new Map(); // Map<odId, {publicKeyB64, resolved}> - échanges en attente
 let keyExchangeResolvers = new Map(); // Map<odId, {resolve, reject}> - promesses d'échange
 
+// ===== SAFETY NUMBERS =====
+let myFingerprint = null; // Mon fingerprint (safety number)
+let peerFingerprints = new Map(); // Map<odId, fingerprint> - fingerprints des pairs
+
 // ===== ÉLÉMENTS DOM =====
 const elements = {
     // Landing page
@@ -448,6 +452,64 @@ async function calculateHash(data) {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// ===== SAFETY NUMBERS (Fingerprint Verification) =====
+
+/**
+ * Génère un fingerprint (safety number) depuis une clé publique ECDH
+ * Format: 12 groupes de 4 chiffres (style Signal)
+ * @param {CryptoKey} publicKey - Clé publique ECDH
+ * @returns {Promise<string>} - Fingerprint formaté "1234 5678 9012 ..."
+ */
+async function generateFingerprint(publicKey) {
+    // Exporter la clé publique en format brut
+    const publicKeyBytes = await window.crypto.subtle.exportKey('raw', publicKey);
+    
+    // SHA-256 du contenu de la clé
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', publicKeyBytes);
+    const hashArray = new Uint8Array(hashBuffer);
+    
+    // Convertir en chaîne de chiffres (prendre 48 chiffres = 12 groupes de 4)
+    let numericString = '';
+    for (let i = 0; i < hashArray.length && numericString.length < 48; i++) {
+        numericString += hashArray[i].toString().padStart(3, '0');
+    }
+    
+    // Découper en groupes de 4 chiffres
+    const groups = [];
+    for (let i = 0; i < 48; i += 4) {
+        groups.push(numericString.substr(i, 4));
+    }
+    
+    return groups.join(' ');
+}
+
+/**
+ * Génère un fingerprint depuis une clé publique en base64
+ * @param {string} publicKeyB64 - Clé publique ECDH en base64
+ * @returns {Promise<string>} - Fingerprint formaté
+ */
+async function generateFingerprintFromB64(publicKeyB64) {
+    const publicKeyBytes = Uint8Array.from(atob(publicKeyB64), c => c.charCodeAt(0));
+    
+    // SHA-256
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', publicKeyBytes);
+    const hashArray = new Uint8Array(hashBuffer);
+    
+    // Convertir en numérique
+    let numericString = '';
+    for (let i = 0; i < hashArray.length && numericString.length < 48; i++) {
+        numericString += hashArray[i].toString().padStart(3, '0');
+    }
+    
+    // Groupes de 4
+    const groups = [];
+    for (let i = 0; i < 48; i += 4) {
+        groups.push(numericString.substr(i, 4));
+    }
+    
+    return groups.join(' ');
+}
+
 // ===== ECDH (Diffie-Hellman Elliptic Curve) =====
 
 /**
@@ -467,6 +529,9 @@ async function generateECDHKeyPair() {
     // Exporter la clé publique en format raw pour partage
     const publicKeyRaw = await window.crypto.subtle.exportKey('raw', ecdhKeyPair.publicKey);
     ecdhPublicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyRaw)));
+    
+    // Générer le fingerprint (safety number)
+    myFingerprint = await generateFingerprint(ecdhKeyPair.publicKey);
     
     console.log('🔐 Paire de clés ECDH générée');
     return ecdhPublicKeyB64;
@@ -629,10 +694,18 @@ function waitForECDHPublicKey(fromOdId, timeoutMs = 30000) {
 /**
  * Handler pour la réception d'une clé publique ECDH
  */
-function handleECDHPublicKey(fromOdId, publicKeyB64) {
+async function handleECDHPublicKey(fromOdId, publicKeyB64) {
     console.log('📥 Clé publique ECDH reçue de:', fromOdId);
     
     pendingKeyExchanges.set(fromOdId, { publicKeyB64, resolved: true });
+    
+    // Générer et stocker le fingerprint du pair
+    try {
+        const peerFingerprint = await generateFingerprintFromB64(publicKeyB64);
+        peerFingerprints.set(fromOdId, peerFingerprint);
+    } catch (err) {
+        console.error('❌ Erreur génération fingerprint peer:', err);
+    }
     
     // Résoudre la promesse en attente si elle existe
     if (keyExchangeResolvers.has(fromOdId)) {
@@ -5479,6 +5552,12 @@ function setupEphemeralMessages() {
         rEphemeralToggle.addEventListener('click', () => showEphemeralDialog());
         updateEphemeralButton(rEphemeralToggle);
     }
+    
+    // Bouton vérification d'identité
+    const verifyBtn = document.getElementById('verify-identity-btn');
+    if (verifyBtn) {
+        verifyBtn.addEventListener('click', () => showSafetyNumbersModal());
+    }
 }
 
 function updateEphemeralButton(btn) {
@@ -5606,6 +5685,64 @@ function handleEphemeralSync(data) {
 function updateAllEphemeralButtons() {
     updateEphemeralButton(document.getElementById('chat-ephemeral-toggle'));
     updateEphemeralButton(document.getElementById('receiver-chat-ephemeral-toggle'));
+}
+
+// ===== SAFETY NUMBERS (Vérification d'identité) =====
+
+function showSafetyNumbersModal() {
+    const modal = document.getElementById('safety-numbers-modal');
+    if (!modal) return;
+    
+    // Afficher mon fingerprint
+    const myNumberEl = document.getElementById('my-safety-number');
+    if (myFingerprint) {
+        myNumberEl.textContent = myFingerprint;
+    } else {
+        myNumberEl.textContent = '❌ Clé non générée';
+    }
+    
+    // Afficher le fingerprint du premier peer connecté
+    const peerNumberEl = document.getElementById('peer-safety-number');
+    if (peerFingerprints.size > 0) {
+        const firstPeerFingerprint = Array.from(peerFingerprints.values())[0];
+        peerNumberEl.textContent = firstPeerFingerprint;
+    } else {
+        peerNumberEl.textContent = '⏳ Aucun correspondant connecté';
+    }
+    
+    // Générer QR codes
+    const myQrDiv = document.getElementById('my-safety-qr');
+    const peerQrDiv = document.getElementById('peer-safety-qr');
+    
+    if (myFingerprint && window.QRCode) {
+        myQrDiv.innerHTML = '';
+        new QRCode(myQrDiv, {
+            text: myFingerprint,
+            width: 150,
+            height: 150,
+            correctLevel: QRCode.CorrectLevel.M
+        });
+    }
+    
+    if (peerFingerprints.size > 0 && window.QRCode) {
+        const firstPeerFingerprint = Array.from(peerFingerprints.values())[0];
+        peerQrDiv.innerHTML = '';
+        new QRCode(peerQrDiv, {
+            text: firstPeerFingerprint,
+            width: 150,
+            height: 150,
+            correctLevel: QRCode.CorrectLevel.M
+        });
+    }
+    
+    // Afficher la modal
+    modal.classList.remove('hidden');
+    
+    // Event listener pour fermer
+    const closeBtn = document.getElementById('safety-numbers-close');
+    if (closeBtn) {
+        closeBtn.onclick = () => modal.classList.add('hidden');
+    }
 }
 
 function scheduleMessageDeletion(messageId, delay) {

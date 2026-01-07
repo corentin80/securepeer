@@ -259,6 +259,7 @@
                         <button class="chat-tool-btn" id="chat-pins-toggle" title="Messages épinglés">📌</button>
                         <button class="chat-tool-btn" id="chat-export-btn" title="Exporter la conversation">📥</button>
                         <button class="chat-tool-btn" id="chat-ephemeral-toggle" title="Messages éphémères">⏱️</button>
+                        <button class="chat-tool-btn" id="verify-identity-btn" title="Vérifier l'identité">🔐</button>
                     </div>
                 </div>
                 <!-- Barre de recherche -->
@@ -458,6 +459,43 @@
                 <input type="checkbox" id="tor-dont-show">
                 <span>Ne plus afficher ce message</span>
             </label>
+        </div>
+    </div>
+
+    <!-- Modal Vérification d'identité (Safety Numbers) -->
+    <div id="safety-numbers-modal" class="tor-popup hidden">
+        <div class="tor-popup-content" style="max-width: 600px;">
+            <div class="tor-popup-header">
+                <span class="tor-icon">🔐</span>
+                <h3>Vérification d'identité</h3>
+            </div>
+            <div class="tor-popup-body">
+                <p><strong>Comparez ces numéros avec votre correspondant</strong> par téléphone, vidéo ou en personne.</p>
+                <p class="tor-hint">Si les numéros correspondent, personne n'intercepte vos messages.</p>
+                
+                <div style="margin: 20px 0;">
+                    <h4 style="margin-bottom: 10px;">Votre numéro de sécurité:</h4>
+                    <div id="my-safety-number" style="font-family: monospace; font-size: 16px; padding: 15px; background: #f5f5f5; border-radius: 8px; word-break: break-all; line-height: 1.8;">
+                        Génération en cours...
+                    </div>
+                    <div id="my-safety-qr" style="margin-top: 15px; text-align: center;"></div>
+                </div>
+                
+                <div style="margin: 20px 0;">
+                    <h4 style="margin-bottom: 10px;">Numéro de votre correspondant:</h4>
+                    <div id="peer-safety-number" style="font-family: monospace; font-size: 16px; padding: 15px; background: #f5f5f5; border-radius: 8px; word-break: break-all; line-height: 1.8;">
+                        En attente...
+                    </div>
+                    <div id="peer-safety-qr" style="margin-top: 15px; text-align: center;"></div>
+                </div>
+                
+                <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 8px; border-left: 4px solid #ffc107;">
+                    <strong>⚠️ Important:</strong> Si les numéros ne correspondent pas, quelqu'un intercepte potentiellement vos messages. Ne partagez aucune information sensible.
+                </div>
+            </div>
+            <div class="tor-popup-actions">
+                <button id="safety-numbers-close" class="btn btn-primary">Fermer</button>
+            </div>
         </div>
     </div>
 
