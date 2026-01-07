@@ -3649,8 +3649,26 @@ function updateLanguage() {
     // Mettre à jour les textes de la page
     const translations = {
         fr: {
-            title: '🔒 SecurePeer',
-            subtitle: 'Transfert de fichiers chiffré de bout en bout, sans serveur intermédiaire',
+            title: 'SecurePeer',
+            tagline: 'Transfert de fichiers & chat chiffré de bout en bout',
+            heroDesc: 'Partagez des fichiers et communiquez en toute sécurité, directement entre appareils, sans aucun serveur intermédiaire.',
+            featureEncryption: 'Chiffrement AES-256',
+            featureEncryptionDesc: 'Vos données sont chiffrées de bout en bout avec un algorithme de qualité militaire.',
+            featureP2P: 'Connexion P2P',
+            featureP2PDesc: 'Transfert direct via WebRTC. Aucun fichier ne transite par nos serveurs.',
+            featureGroup: 'Jusqu\'à 20 personnes',
+            featureGroupDesc: 'Créez des rooms de groupe pour partager avec plusieurs personnes simultanément.',
+            featureNoStorage: 'Aucun stockage',
+            featureNoStorageDesc: 'Nous ne stockons rien. Pas de compte, pas de logs, pas de traces.',
+            ctaButton: '🚀 Commencer',
+            ctaHint: 'Gratuit, sans inscription',
+            howItWorksTitle: 'Comment ça marche ?',
+            step1Title: 'Créez une session',
+            step1Desc: 'Choisissez le mode : fichiers, chat ou les deux',
+            step2Title: 'Partagez le lien',
+            step2Desc: 'Envoyez le lien sécurisé à vos destinataires',
+            step3Title: 'Transférez',
+            step3Desc: 'Échangez fichiers et messages en toute sécurité',
             modeTitle: '🚀 Créer une session',
             modeDesc: 'Choisissez le type de session que vous souhaitez démarrer',
             modeFile: 'Transfert de fichiers',
@@ -3705,8 +3723,26 @@ function updateLanguage() {
             footer: '🔐 Chiffrement AES-256-GCM | 🌐 WebRTC P2P | 🚫 Aucune donnée stockée sur le serveur | SecurePeer'
         },
         en: {
-            title: '🔒 SecurePeer',
-            subtitle: 'End-to-end encrypted file transfer, no intermediate server',
+            title: 'SecurePeer',
+            tagline: 'End-to-end encrypted file transfer & chat',
+            heroDesc: 'Share files and communicate securely, directly between devices, without any intermediate server.',
+            featureEncryption: 'AES-256 Encryption',
+            featureEncryptionDesc: 'Your data is end-to-end encrypted with military-grade algorithm.',
+            featureP2P: 'P2P Connection',
+            featureP2PDesc: 'Direct transfer via WebRTC. No files go through our servers.',
+            featureGroup: 'Up to 20 people',
+            featureGroupDesc: 'Create group rooms to share with multiple people simultaneously.',
+            featureNoStorage: 'No storage',
+            featureNoStorageDesc: 'We don\'t store anything. No account, no logs, no traces.',
+            ctaButton: '🚀 Start',
+            ctaHint: 'Free, no registration',
+            howItWorksTitle: 'How does it work?',
+            step1Title: 'Create a session',
+            step1Desc: 'Choose the mode: files, chat or both',
+            step2Title: 'Share the link',
+            step2Desc: 'Send the secure link to your recipients',
+            step3Title: 'Transfer',
+            step3Desc: 'Exchange files and messages securely',
             modeTitle: '🚀 Create a session',
             modeDesc: 'Choose the type of session you want to start',
             modeFile: 'File Transfer',
@@ -3761,8 +3797,26 @@ function updateLanguage() {
             footer: '🔐 AES-256-GCM Encryption | 🌐 WebRTC P2P | 🚫 No data stored on server | SecurePeer'
         },
         es: {
-            title: '🔒 SecurePeer',
-            subtitle: 'Transferencia de archivos cifrada de extremo a extremo, sin servidor intermedio',
+            title: 'SecurePeer',
+            tagline: 'Transferencia de archivos y chat cifrado de extremo a extremo',
+            heroDesc: 'Comparta archivos y comuníquese de forma segura, directamente entre dispositivos, sin ningún servidor intermedio.',
+            featureEncryption: 'Cifrado AES-256',
+            featureEncryptionDesc: 'Sus datos están cifrados de extremo a extremo con algoritmo de grado militar.',
+            featureP2P: 'Conexión P2P',
+            featureP2PDesc: 'Transferencia directa vía WebRTC. Ningún archivo pasa por nuestros servidores.',
+            featureGroup: 'Hasta 20 personas',
+            featureGroupDesc: 'Cree salas de grupo para compartir con varias personas simultáneamente.',
+            featureNoStorage: 'Sin almacenamiento',
+            featureNoStorageDesc: 'No almacenamos nada. Sin cuenta, sin registros, sin rastros.',
+            ctaButton: '🚀 Comenzar',
+            ctaHint: 'Gratis, sin registro',
+            howItWorksTitle: '¿Cómo funciona?',
+            step1Title: 'Cree una sesión',
+            step1Desc: 'Elija el modo: archivos, chat o ambos',
+            step2Title: 'Comparta el enlace',
+            step2Desc: 'Envíe el enlace seguro a sus destinatarios',
+            step3Title: 'Transfiera',
+            step3Desc: 'Intercambie archivos y mensajes de forma segura',
             modeTitle: '🚀 Crear una sesión',
             modeDesc: 'Elige el tipo de sesión que quieres iniciar',
             modeFile: 'Transferencia de archivos',
@@ -3817,8 +3871,26 @@ function updateLanguage() {
             footer: '🔐 Cifrado AES-256-GCM | 🌐 WebRTC P2P | 🚫 Sin datos almacenados en servidor | SecurePeer'
         },
         it: {
-            title: '🔒 SecurePeer',
-            subtitle: 'Trasferimento file crittografato end-to-end, senza server intermediario',
+            title: 'SecurePeer',
+            tagline: 'Trasferimento file e chat crittografati end-to-end',
+            heroDesc: 'Condividi file e comunica in modo sicuro, direttamente tra dispositivi, senza alcun server intermedio.',
+            featureEncryption: 'Crittografia AES-256',
+            featureEncryptionDesc: 'I tuoi dati sono crittografati end-to-end con algoritmo di livello militare.',
+            featureP2P: 'Connessione P2P',
+            featureP2PDesc: 'Trasferimento diretto via WebRTC. Nessun file passa attraverso i nostri server.',
+            featureGroup: 'Fino a 20 persone',
+            featureGroupDesc: 'Crea stanze di gruppo per condividere con più persone contemporaneamente.',
+            featureNoStorage: 'Nessun archivio',
+            featureNoStorageDesc: 'Non archiviamo nulla. Nessun account, nessun log, nessuna traccia.',
+            ctaButton: '🚀 Inizia',
+            ctaHint: 'Gratuito, senza registrazione',
+            howItWorksTitle: 'Come funziona?',
+            step1Title: 'Crea una sessione',
+            step1Desc: 'Scegli la modalità: file, chat o entrambi',
+            step2Title: 'Condividi il link',
+            step2Desc: 'Invia il link sicuro ai tuoi destinatari',
+            step3Title: 'Trasferisci',
+            step3Desc: 'Scambia file e messaggi in modo sicuro',
             modeTitle: '🚀 Crea una sessione',
             modeDesc: 'Scegli il tipo di sessione che vuoi avviare',
             modeFile: 'Trasferimento file',
@@ -3873,8 +3945,26 @@ function updateLanguage() {
             footer: '🔐 Crittografia AES-256-GCM | 🌐 WebRTC P2P | 🚫 Nessun dato archiviato sul server | SecurePeer'
         },
         ru: {
-            title: '🔒 SecurePeer',
-            subtitle: 'Сквозное зашифрованная передача файлов без промежуточного сервера',
+            title: 'SecurePeer',
+            tagline: 'Сквозная зашифрованная передача файлов и чат',
+            heroDesc: 'Делитесь файлами и общайтесь безопасно, напрямую между устройствами, без промежуточного сервера.',
+            featureEncryption: 'Шифрование AES-256',
+            featureEncryptionDesc: 'Ваши данные зашифрованы от начала до конца военным алгоритмом.',
+            featureP2P: 'P2P соединение',
+            featureP2PDesc: 'Прямая передача через WebRTC. Никакие файлы не проходят через наши серверы.',
+            featureGroup: 'До 20 человек',
+            featureGroupDesc: 'Создавайте групповые комнаты для совместного использования с несколькими людьми одновременно.',
+            featureNoStorage: 'Без хранения',
+            featureNoStorageDesc: 'Мы ничего не храним. Нет аккаунта, нет логов, нет следов.',
+            ctaButton: '🚀 Начать',
+            ctaHint: 'Бесплатно, без регистрации',
+            howItWorksTitle: 'Как это работает?',
+            step1Title: 'Создайте сессию',
+            step1Desc: 'Выберите режим: файлы, чат или оба',
+            step2Title: 'Поделитесь ссылкой',
+            step2Desc: 'Отправьте безопасную ссылку получателям',
+            step3Title: 'Передавайте',
+            step3Desc: 'Обменивайтесь файлами и сообщениями безопасно',
             modeTitle: '🚀 Создать сессию',
             modeDesc: 'Выберите тип сессии, которую хотите начать',
             modeFile: 'Передача файлов',
@@ -3932,12 +4022,81 @@ function updateLanguage() {
     
     const t = translations[currentLanguage] || translations.fr;
     
-    // Mettre à jour les éléments DOM (avec garde anti-null)
-    const heroTitleEl = document.querySelector('.hero-content h1');
+    // ========== LANDING PAGE ==========
+    const heroTitleEl = document.querySelector('.hero-landing h1');
     if (heroTitleEl) heroTitleEl.textContent = t.title;
-    const subtitleEl = document.querySelector('.subtitle');
-    if (subtitleEl) subtitleEl.textContent = t.subtitle;
     
+    const heroTaglineEl = document.querySelector('.hero-tagline');
+    if (heroTaglineEl) heroTaglineEl.textContent = t.tagline;
+    
+    const heroDescEl = document.querySelector('.hero-description');
+    if (heroDescEl) heroDescEl.textContent = t.heroDesc;
+    
+    // Features cards
+    const featureCards = document.querySelectorAll('.feature-card');
+    if (featureCards.length >= 4) {
+        // Card 1: Encryption
+        const enc = featureCards[0];
+        const encH3 = enc.querySelector('h3');
+        const encP = enc.querySelector('p');
+        if (encH3) encH3.textContent = t.featureEncryption;
+        if (encP) encP.textContent = t.featureEncryptionDesc;
+        
+        // Card 2: P2P
+        const p2p = featureCards[1];
+        const p2pH3 = p2p.querySelector('h3');
+        const p2pP = p2p.querySelector('p');
+        if (p2pH3) p2pH3.textContent = t.featureP2P;
+        if (p2pP) p2pP.textContent = t.featureP2PDesc;
+        
+        // Card 3: Group
+        const group = featureCards[2];
+        const groupH3 = group.querySelector('h3');
+        const groupP = group.querySelector('p');
+        if (groupH3) groupH3.textContent = t.featureGroup;
+        if (groupP) groupP.textContent = t.featureGroupDesc;
+        
+        // Card 4: No Storage
+        const noStorage = featureCards[3];
+        const noStorageH3 = noStorage.querySelector('h3');
+        const noStorageP = noStorage.querySelector('p');
+        if (noStorageH3) noStorageH3.textContent = t.featureNoStorage;
+        if (noStorageP) noStorageP.textContent = t.featureNoStorageDesc;
+    }
+    
+    // CTA Section
+    const ctaBtn = document.getElementById('start-session-btn');
+    if (ctaBtn) ctaBtn.textContent = t.ctaButton;
+    
+    const ctaHint = document.querySelector('.cta-hint');
+    if (ctaHint) ctaHint.textContent = t.ctaHint;
+    
+    // How it works section
+    const howItWorksTitle = document.querySelector('.how-it-works h2');
+    if (howItWorksTitle) howItWorksTitle.textContent = t.howItWorksTitle;
+    
+    const steps = document.querySelectorAll('.step');
+    if (steps.length >= 3) {
+        // Step 1
+        const step1H4 = steps[0].querySelector('h4');
+        const step1P = steps[0].querySelector('p');
+        if (step1H4) step1H4.textContent = t.step1Title;
+        if (step1P) step1P.textContent = t.step1Desc;
+        
+        // Step 2
+        const step2H4 = steps[1].querySelector('h4');
+        const step2P = steps[1].querySelector('p');
+        if (step2H4) step2H4.textContent = t.step2Title;
+        if (step2P) step2P.textContent = t.step2Desc;
+        
+        // Step 3
+        const step3H4 = steps[2].querySelector('h4');
+        const step3P = steps[2].querySelector('p');
+        if (step3H4) step3H4.textContent = t.step3Title;
+        if (step3P) step3P.textContent = t.step3Desc;
+    }
+    
+    // ========== MODE SELECTION & SESSION SECTIONS ==========
     // Mettre à jour le header sender - selon le mode de session actuel
     const senderHeader = document.querySelector('.sender-header h2');
     const sectionDesc = document.querySelector('.section-desc');
