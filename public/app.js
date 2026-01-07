@@ -3314,10 +3314,13 @@ function handleHashConnection(hash) {
             document.getElementById('incoming-file-info').classList.add('hidden');
             elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
             elements.receiverStatus.textContent = 'Connexion au chat...';
+            // NE PAS afficher receiverBothFileSection pour le mode chat simple
         } else if (sessionMode === 'both') {
             elements.receiverBothFileSection.classList.remove('hidden');
             elements.receiverTitle.textContent = '💬 Chat + Fichiers';
             document.getElementById('incoming-file-info').classList.add('hidden');
+        } else if (sessionMode === 'file') {
+            elements.receiverTitle.textContent = '📥 Réception de fichier';
         }
 
         connectWebSocket();
@@ -3343,10 +3346,13 @@ function handleHashConnection(hash) {
         if (sessionMode === 'chat') {
             document.getElementById('incoming-file-info').classList.add('hidden');
             elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
+            // NE PAS afficher receiverBothFileSection pour le mode chat simple
         } else if (sessionMode === 'both') {
             elements.receiverBothFileSection.classList.remove('hidden');
             elements.receiverTitle.textContent = '💬 Chat + Fichiers';
             document.getElementById('incoming-file-info').classList.add('hidden');
+        } else if (sessionMode === 'file') {
+            elements.receiverTitle.textContent = '📥 Réception de fichier';
         }
 
         // Générer notre paire ECDH puis connecter
@@ -3376,10 +3382,13 @@ function handleHashConnection(hash) {
             document.getElementById('incoming-file-info').classList.add('hidden');
             elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
             elements.receiverStatus.textContent = 'Connexion au chat...';
+            // NE PAS afficher receiverBothFileSection pour le mode chat simple
         } else if (sessionMode === 'both') {
             elements.receiverBothFileSection.classList.remove('hidden');
             elements.receiverTitle.textContent = '💬 Chat + Fichiers';
             document.getElementById('incoming-file-info').classList.add('hidden');
+        } else if (sessionMode === 'file') {
+            elements.receiverTitle.textContent = '📥 Réception de fichier';
         }
 
         importKeyFromBase64(keyString).then(() => {
@@ -3465,6 +3474,10 @@ function showPseudoThenConnect(hash) {
 
 // Afficher l'interface créateur selon le mode
 function showCreatorInterface(mode) {
+    // Cacher la landing page
+    if (elements.landingPage) elements.landingPage.classList.add('hidden');
+    if (elements.modeSelection) elements.modeSelection.classList.add('hidden');
+    
     // Setup du chat et des fichiers
     setupChat();
     setupBothModeFiles();
