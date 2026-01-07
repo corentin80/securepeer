@@ -25,10 +25,25 @@
 - [x] Skipped keys buffer (Map avec expiry 1h)
 - [x] Header encryption (metadata protection)
 - [x] Tests unitaires 9/9 PASS
-- [x] Intégration P2P (chat messages chiffrés)
-- [x] Documentation technique (4 fichiers)
+- [x] Intégration P2P temps réel
+  - [x] Init automatique après auth par mot de passe
+  - [x] Handshake DH via messages `double-ratchet-init`
+  - [x] `broadcastToAllPeers()` chiffre automatiquement
+  - [x] `handleDoubleRatchetMessage()` déchiffre et dispatch
+  - [x] Compatibilité backward (ancien format AES-GCM)
+- [x] Documentation technique (4 fichiers: spec, usage, roadmap, changelog)
 
-**Status:** ✅ **PRODUCTION** - Chat chiffré avec Signal Protocol actif
+**Fichiers modifiés:**
+- `public/app.js` (lines 645-1361): Core Double Ratchet + intégration (~700 lines)
+- `public/double-ratchet-tests.js`: Tests unitaires (315 lines)
+- Docs: DOUBLE_RATCHET.md, DOUBLE_RATCHET_USAGE.md, IMPLEMENTATION_SUMMARY.md
+
+**Commits clés:**
+- `e4ffe04`: Fix chainKey avant avancement pour header encryption
+- `dfed902`: Intégration P2P communications
+- `fedbc0a`: Roadmap refocus MVP monétisable
+
+**Status:** ✅ **PRODUCTION** - Chat chiffré Signal Protocol actif sur https://securepeer.eu
 
 **Note:** X3DH non implémenté (pas nécessaire pour P2P temps réel)
 
