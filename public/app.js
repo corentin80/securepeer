@@ -2694,12 +2694,26 @@ async function generateShareLink() {
     let link;
     const mode = sessionMode || 'file';
     
+    console.log('🔗 [generateShareLink] Génération du lien...');
+    console.log('   usePassword:', usePassword);
+    console.log('   passwordSaltB64:', passwordSaltB64);
+    console.log('   passwordIterations:', passwordIterations);
+    console.log('   roomId:', roomId);
+    console.log('   mode:', mode);
+    
     if (usePassword) {
         // Lien avec mot de passe : roomId_mode_pwd_salt_iterations
+        if (!passwordSaltB64) {
+            console.error('❌ [generateShareLink] ERREUR: usePassword=true mais passwordSaltB64 est null/undefined!');
+            showError('Erreur interne: salt de chiffrement manquant');
+            return;
+        }
         link = `${window.location.origin}${window.location.pathname}#${roomId}_${mode}_pwd_${passwordSaltB64}_${passwordIterations}`;
+        console.log('🔐 Lien avec mot de passe généré:', link);
     } else {
         // Lien ECDH (sans clé dans l'URL) : roomId_mode_ecdh
         link = `${window.location.origin}${window.location.pathname}#${roomId}_${mode}_ecdh`;
+        console.log('🔑 Lien ECDH généré:', link);
     }
     
     elements.shareLink.value = link;
