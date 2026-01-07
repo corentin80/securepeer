@@ -2105,13 +2105,15 @@ function initPeerWith(targetOdId, initiator) {
             // En mode both, pas de transfert automatique - les fichiers sont envoyés via la zone latérale
         } else {
             if (sessionMode === 'chat') {
-                elements.receiverStatus.textContent = 'Connecté ! Vous pouvez discuter.';
-                document.querySelector('.receiver-info').style.display = 'none';
+                if (elements.receiverStatus) elements.receiverStatus.textContent = 'Connecté ! Vous pouvez discuter.';
+                const receiverInfo = document.querySelector('.receiver-info');
+                if (receiverInfo) receiverInfo.style.display = 'none';
             } else if (sessionMode === 'both') {
-                elements.receiverStatus.textContent = 'Connecté ! Vous pouvez discuter et échanger des fichiers.';
-                document.querySelector('.receiver-info').style.display = 'none';
+                if (elements.receiverStatus) elements.receiverStatus.textContent = 'Connecté ! Vous pouvez discuter et échanger des fichiers.';
+                const receiverInfo = document.querySelector('.receiver-info');
+                if (receiverInfo) receiverInfo.style.display = 'none';
             } else {
-                elements.receiverStatus.textContent = 'Connexion établie ! Transfert en cours...';
+                if (elements.receiverStatus) elements.receiverStatus.textContent = 'Connexion établie ! Transfert en cours...';
             }
         }
     });
