@@ -1842,7 +1842,7 @@ function handleWebSocketMessage(data) {
         
         case 'double-ratchet-init':
             // Réception de la clé publique DH pour compléter le handshake
-            handleDoubleRatchetInit(data);
+            handleDoubleRatchetInit(data, data.fromOdId);
             break;
     }
 }
