@@ -656,6 +656,11 @@ let doubleRatchetState = new Map(); // Map<odId, {rootKey, sendChain, recvChain,
 let pendingDoubleRatchetInits = new Map(); // Map<odId, {dhPublicKey}>
 
 /**
+ * Timestamp du dernier envoi de double-ratchet-init (anti-boucle)
+ */
+let lastDoubleRatchetInitSent = new Map(); // Map<odId, timestamp>
+
+/**
  * Structure du ratchet pour une paire de peers:
  * {
  *   rootKey: Uint8Array(32), // Root key dérivée d'ECDH initial
@@ -2178,7 +2183,7 @@ async function handleAuthResponse(data) {
 }
 
 async function handleDoubleRatchetInit(data, fromOdId) {
-    if (!fromOdId || !data.dhPublicKey) {
+    if (!fromOdId || !data.dhPublicKey || !cryptoKey) {
         return;
     }
     
@@ -2188,9 +2193,35 @@ async function handleDoubleRatchetInit(data, fromOdId) {
         return;
     }
     
-    // Compléter le handshake (sans renvoyer pour éviter boucle infinie)
+    // Si déjà initialisé, c'est un reload de l'autre côté → réinitialiser
     try {
+        // Anti-boucle: ne pas renvoyer si on a déjà répondu récemment (< 5s)
+        const lastSent = lastDoubleRatchetInitSent.get(fromOdId) || 0;
+        const now = Date.now();
+        const shouldReply = (now - lastSent) > 5000;
+        
+        // Reset complet de notre état
+        doubleRatchetState.delete(fromOdId);
+        
+        // Réinitialiser avec nouvelle clé
+        const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
+        const sharedSecret = new Uint8Array(keyMaterial);
+        const amInitiator = isCreator;
+        const dhPublicKey = await initializeDoubleRatchet(fromOdId, sharedSecret, amInitiator);
+        
+        // Compléter avec leur clé
         await completeDoubleRatchetHandshake(fromOdId, data.dhPublicKey);
+        
+        // Renvoyer notre nouvelle clé UNE SEULE FOIS
+        if (shouldReply) {
+            ws.send(JSON.stringify({
+                type: 'double-ratchet-init',
+                to: fromOdId,
+                publicKey: Array.from(dhPublicKey)
+            }));
+            lastDoubleRatchetInitSent.set(fromOdId, now);
+        }
+        
     } catch (err) {
         console.error('❌ Handshake Double Ratchet:', err.message);
     }
