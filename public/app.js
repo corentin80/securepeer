@@ -2692,13 +2692,22 @@ function updateProgress(current, total) {
 async function generateShareLink() {
     let link;
     const mode = sessionMode || 'file';
+    let hashPart;
     
     if (usePassword) {
         // Lien avec mot de passe : roomId_mode_pwd_salt_iterations
-        link = `${window.location.origin}${window.location.pathname}#${roomId}_${mode}_pwd_${passwordSaltB64}_${passwordIterations}`;
+        hashPart = `${roomId}_${mode}_pwd_${passwordSaltB64}_${passwordIterations}`;
+        link = `${window.location.origin}${window.location.pathname}#${hashPart}`;
     } else {
         // Lien ECDH (sans clé dans l'URL) : roomId_mode_ecdh
-        link = `${window.location.origin}${window.location.pathname}#${roomId}_${mode}_ecdh`;
+        hashPart = `${roomId}_${mode}_ecdh`;
+        link = `${window.location.origin}${window.location.pathname}#${hashPart}`;
+    }
+    
+    // Uniformiser: le créateur bascule aussi sur l'URL avec hash
+    if (window.location.hash !== `#${hashPart}`) {
+        window.location.hash = hashPart;
+        console.log('🔗 Créateur redirigé vers:', hashPart);
     }
     
     elements.shareLink.value = link;
@@ -4048,10 +4057,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('🔗 [INIT] Lien de partage détecté, roomId:', hashRoomId);
         
         // Vérifier si c'est la même session que celle stockée
-        if (restored && restored.roomId === hashRoomId && restored.isReceiver) {
-            console.log('🔄 [INIT] Même session receiver, restauration...');
-            // Restaurer la session receiver existante
-            await restoreReceiverSession(restored, hash);
+        if (restored && restored.roomId === hashRoomId) {
+            // Même room: vérifier si c'est le créateur ou le receiver
+            if (restored.isCreator) {
+                console.log('👑 [INIT] Créateur qui rafraîchit (avec hash URL), restauration...');
+                await restoreCreatorSession(restored);
+            } else if (restored.isReceiver) {
+                console.log('🔄 [INIT] Receiver qui rafraîchit, restauration...');
+                await restoreReceiverSession(restored, hash);
+            } else {
+                console.log('🆕 [INIT] Nouvelle visite via lien, flow receiver normal');
+                clearSessionStorage();
+                elements.landingPage.classList.add('hidden');
+                showPseudoThenConnect(hash);
+            }
         } else {
             console.log('🆕 [INIT] Nouvelle visite via lien, flow receiver normal');
             // Effacer toute ancienne session pour éviter les conflits
