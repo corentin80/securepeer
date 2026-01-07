@@ -1751,6 +1751,21 @@ function handleWebSocketMessage(data) {
                         await deriveSharedKey(data.publicKeyB64);
                         console.log('🔐 [ECDH] Clé AES dérivée avec succès (créateur)');
                         
+                        // Initialiser le Double Ratchet (créateur = initiateur)
+                        if (cryptoKey) {
+                            const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
+                            const sharedSecret = new Uint8Array(keyMaterial);
+                            const dhPublicKey = await initializeDoubleRatchet(data.fromId, sharedSecret, true);
+                            console.log('🔐 Double Ratchet initialisé avec', data.fromId, '(créateur)');
+                            
+                            // Envoyer la clé publique DH via signaling
+                            ws.send(JSON.stringify({
+                                type: 'double-ratchet-init',
+                                to: data.fromId,
+                                publicKey: Array.from(dhPublicKey)
+                            }));
+                        }
+                        
                         // Envoyer ma clé publique en retour
                         sendECDHPublicKey(data.fromId);
                         
@@ -1769,6 +1784,21 @@ function handleWebSocketMessage(data) {
                         // Dériver la clé AES partagée
                         await deriveSharedKey(data.publicKeyB64);
                         console.log('🔐 [ECDH] Clé AES dérivée avec succès (receiver)');
+                        
+                        // Initialiser le Double Ratchet (receiver = non-initiateur)
+                        if (cryptoKey) {
+                            const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
+                            const sharedSecret = new Uint8Array(keyMaterial);
+                            const dhPublicKey = await initializeDoubleRatchet(data.fromId, sharedSecret, false);
+                            console.log('🔐 Double Ratchet initialisé avec', data.fromId, '(receiver)');
+                            
+                            // Envoyer la clé publique DH via signaling
+                            ws.send(JSON.stringify({
+                                type: 'double-ratchet-init',
+                                to: data.fromId,
+                                publicKey: Array.from(dhPublicKey)
+                            }));
+                        }
                         
                         // Sauvegarder la session
                         saveSessionToStorage();
