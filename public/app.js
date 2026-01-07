@@ -5553,10 +5553,16 @@ function setupEphemeralMessages() {
         updateEphemeralButton(rEphemeralToggle);
     }
     
-    // Bouton vérification d'identité
+    // Bouton vérification d'identité (créateur)
     const verifyBtn = document.getElementById('verify-identity-btn');
     if (verifyBtn) {
         verifyBtn.addEventListener('click', () => showSafetyNumbersModal());
+    }
+    
+    // Bouton vérification d'identité (receiver)
+    const rVerifyBtn = document.getElementById('receiver-verify-identity-btn');
+    if (rVerifyBtn) {
+        rVerifyBtn.addEventListener('click', () => showSafetyNumbersModal());
     }
 }
 
