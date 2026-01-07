@@ -2085,12 +2085,16 @@ function initPeerWith(targetOdId, initiator) {
         }
         
         // Afficher la zone fichiers si mode both
+        console.log('📁 [joined-room] Check mode both - sessionMode:', sessionMode);
         if (sessionMode === 'both') {
+            console.log('   ✅ Mode both détecté, affichage bothFileSection');
             if (isCreator) {
                 elements.bothFileSection.classList.remove('hidden');
             } else {
                 elements.receiverBothFileSection.classList.remove('hidden');
             }
+        } else {
+            console.log('   ℹ️ Pas mode both, bothFileSection reste cachée');
         }
         
         if (isCreator) {
@@ -3474,9 +3478,22 @@ function showPseudoThenConnect(hash) {
 
 // Afficher l'interface créateur selon le mode
 function showCreatorInterface(mode) {
+    console.log('🎨 [showCreatorInterface] Appelé avec mode:', mode);
+    console.log('   sessionMode global:', sessionMode);
+    
     // Cacher la landing page
-    if (elements.landingPage) elements.landingPage.classList.add('hidden');
-    if (elements.modeSelection) elements.modeSelection.classList.add('hidden');
+    if (elements.landingPage) {
+        elements.landingPage.classList.add('hidden');
+        console.log('   ✅ Landing page cachée');
+    }
+    if (elements.modeSelection) {
+        elements.modeSelection.classList.add('hidden');
+        console.log('   ✅ Mode selection cachée');
+    }
+    if (elements.pseudoSection) {
+        elements.pseudoSection.classList.add('hidden');
+        console.log('   ✅ Pseudo section cachée');
+    }
     
     // Setup du chat et des fichiers
     setupChat();
