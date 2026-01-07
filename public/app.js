@@ -3950,16 +3950,21 @@ function updateLanguage() {
     
     const passwordLabel = document.querySelector('.password-block label');
     if (passwordLabel) passwordLabel.textContent = t.password;
-    document.getElementById('password-input').placeholder = t.passwordPlaceholder;
-    document.getElementById('send-file-btn').textContent = t.sendBtn;
-    document.querySelector('.password-block .hint').textContent = t.passwordHint;
+    const passwordInputEl = document.getElementById('password-input');
+    if (passwordInputEl) passwordInputEl.placeholder = t.passwordPlaceholder;
+    const sendFileBtnEl = document.getElementById('send-file-btn');
+    if (sendFileBtnEl) sendFileBtnEl.textContent = t.sendBtn;
+    const passwordHintEl = document.querySelector('.password-block .hint');
+    if (passwordHintEl) passwordHintEl.textContent = t.passwordHint;
     
     const linkHeader = document.querySelector('.link-header h3');
     if (linkHeader) linkHeader.textContent = t.shareTitle;
     const linkInfo = document.querySelector('.link-info');
     if (linkInfo) linkInfo.textContent = t.linkInfo;
-    document.getElementById('copy-link').textContent = t.copyBtn;
-    document.getElementById('link-status').innerHTML = `<span class="pulse"></span>${t.waiting}`;
+    const copyLinkEl = document.getElementById('copy-link');
+    if (copyLinkEl) copyLinkEl.textContent = t.copyBtn;
+    const linkStatusEl = document.getElementById('link-status');
+    if (linkStatusEl) linkStatusEl.innerHTML = `<span class="pulse"></span>${t.waiting}`;
     
     const qrHintEl = document.querySelector('.qrcode-hint');
     if (qrHintEl) qrHintEl.textContent = t.qrHint;
@@ -3998,30 +4003,37 @@ function updateLanguage() {
     const receiverTitle = document.querySelector('.receiver-info h2');
     if (receiverTitle) receiverTitle.textContent = t.receiverTitle;
     
+    // Éléments receiver (peuvent ne pas exister si interface unifiée)
     const receiverPasswordLabel = document.querySelector('#receiver-password-block label');
     if (receiverPasswordLabel) receiverPasswordLabel.textContent = t.receiverPassword;
-    document.getElementById('receiver-password').placeholder = t.receiverPasswordPlaceholder;
-    document.getElementById('receiver-password-apply').textContent = t.unlockBtn;
+    const receiverPasswordEl = document.getElementById('receiver-password');
+    if (receiverPasswordEl) receiverPasswordEl.placeholder = t.receiverPasswordPlaceholder;
+    const receiverPasswordApplyEl = document.getElementById('receiver-password-apply');
+    if (receiverPasswordApplyEl) receiverPasswordApplyEl.textContent = t.unlockBtn;
     
     const receiverPasswordHint = document.querySelector('#receiver-password-block .hint');
     if (receiverPasswordHint) receiverPasswordHint.textContent = t.passwordHintReceiver;
     
-    if (document.getElementById('receive-file-btn')) {
-        document.getElementById('receive-file-btn').textContent = t.receiveBtn;
-    }
+    const receiveFileBtn = document.getElementById('receive-file-btn');
+    if (receiveFileBtn) receiveFileBtn.textContent = t.receiveBtn;
     
-    document.getElementById('progress-title').textContent = t.transferProgress;
+    const progressTitleEl = document.getElementById('progress-title');
+    if (progressTitleEl) progressTitleEl.textContent = t.transferProgress;
     
     const completeHeading = document.querySelector('.complete-content h2');
     if (completeHeading) completeHeading.textContent = t.complete;
-    document.querySelector('.integrity-check span:last-child').textContent = t.integrity;
-    document.getElementById('new-transfer').textContent = t.newTransfer;
+    const integrityEl = document.querySelector('.integrity-check span:last-child');
+    if (integrityEl) integrityEl.textContent = t.integrity;
+    const newTransferEl = document.getElementById('new-transfer');
+    if (newTransferEl) newTransferEl.textContent = t.newTransfer;
     
     const errorHeading = document.querySelector('.error-content h2');
     if (errorHeading) errorHeading.textContent = t.error;
-    document.getElementById('retry-transfer').textContent = t.retry;
+    const retryEl = document.getElementById('retry-transfer');
+    if (retryEl) retryEl.textContent = t.retry;
     
-    document.querySelector('footer p').textContent = t.footer;
+    const footerEl = document.querySelector('footer p');
+    if (footerEl) footerEl.textContent = t.footer;
 }
 
 // Appliquer la langue au chargement
