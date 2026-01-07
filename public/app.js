@@ -922,8 +922,6 @@ async function completeDoubleRatchetHandshake(odId, theirPublicKey) {
         // Réinitialiser le timer DH ratchet après handshake
         state.dhRatchet.lastRatchetTime = Date.now();
         
-        console.log('✅ Handshake Double Ratchet complété pour', odId);
-        
     } catch (err) {
         console.error('❌ Erreur handshake Double Ratchet:', err);
         throw err;
@@ -2186,35 +2184,7 @@ async function handleDoubleRatchetInit(data, fromOdId) {
         return;
     }
     
-    // Si déjà initialisé, c'est une réinitialisation (reload de l'autre côté)
-    // Reset complet et renvoyer notre nouvelle clé
-    if (doubleRatchetState.has(fromOdId) && cryptoKey) {
-        try {
-            // Supprimer l'ancien état
-            doubleRatchetState.delete(fromOdId);
-            
-            // Réinitialiser avec nouvelle clé
-            const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
-            const sharedSecret = new Uint8Array(keyMaterial);
-            const amInitiator = isCreator;
-            const dhPublicKey = await initializeDoubleRatchet(fromOdId, sharedSecret, amInitiator);
-            
-            // Compléter avec leur clé
-            await completeDoubleRatchetHandshake(fromOdId, data.dhPublicKey);
-            
-            // Renvoyer notre clé
-            ws.send(JSON.stringify({
-                type: 'double-ratchet-init',
-                to: fromOdId,
-                publicKey: Array.from(dhPublicKey)
-            }));
-            
-            return;
-        } catch (err) {
-            console.error('❌ Erreur réinit Double Ratchet:', err.message);
-        }
-    }
-    
+    // Compléter le handshake (sans renvoyer pour éviter boucle infinie)
     try {
         await completeDoubleRatchetHandshake(fromOdId, data.dhPublicKey);
     } catch (err) {
