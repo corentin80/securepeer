@@ -1813,6 +1813,11 @@ function handleWebSocketMessage(data) {
                 })();
             }
             break;
+        
+        case 'double-ratchet-init':
+            // Réception de la clé publique DH pour compléter le handshake
+            handleDoubleRatchetInit(data);
+            break;
     }
 }
 

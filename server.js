@@ -482,6 +482,27 @@ wss.on('connection', (ws, req) => {
                     break;
                 }
                 
+                case 'double-ratchet-init': {
+                    // Relayer la clé publique DH pour Double Ratchet
+                    if (!currentRoom) return;
+                    
+                    const room = rooms.get(currentRoom);
+                    if (!room) return;
+                    
+                    const targetId = data.to;
+                    const target = room.participants.get(targetId);
+                    
+                    if (target && target.ws.readyState === WebSocket.OPEN) {
+                        target.ws.send(JSON.stringify({
+                            type: 'double-ratchet-init',
+                            fromOdId: odId,
+                            dhPublicKey: data.publicKey
+                        }));
+                        console.log(`🔐 [DR] Clé DH relayée de ${pseudo} vers ${targetId}`);
+                    }
+                    break;
+                }
+                
                 case 'rejoin-room': {
                     console.log('🔄 [REJOIN] Demande rejoin-room reçue:');
                     console.log('   📦 roomId:', data.roomId);
