@@ -3293,6 +3293,18 @@ function handleHashConnection(hash) {
         elements.receiverStatus.textContent = 'Mot de passe requis pour déchiffrer.';
         showEphemeralBadge();
         
+        // Attacher les event listeners pour le mot de passe
+        if (elements.receiverPasswordApply) {
+            elements.receiverPasswordApply.onclick = applyReceiverPassword;
+        }
+        if (elements.receiverPassword) {
+            elements.receiverPassword.addEventListener('keyup', (e) => {
+                if (e.key === 'Enter') {
+                    applyReceiverPassword();
+                }
+            });
+        }
+        
         // Afficher le chat si le mode l'inclut
         if (sessionMode === 'chat' || sessionMode === 'both') {
             elements.receiverChatSection.classList.remove('hidden');
@@ -3580,16 +3592,12 @@ function setupEventListeners() {
         elements.fileInput.click();
     });
 
-    if (elements.receiverPasswordApply) {
-        elements.receiverPasswordApply.addEventListener('click', applyReceiverPassword);
-    }
-    if (elements.receiverPassword) {
-        elements.receiverPassword.addEventListener('keyup', (e) => {
-            if (e.key === 'Enter') {
-                applyReceiverPassword();
-            }
-        });
-    }
+    // NOTE: receiverPasswordApply event listener est attaché dynamiquement 
+    // dans handleHashConnection() et restoreReceiverSession() selon le contexte
+    // Ne PAS l'attacher ici car receiverPasswordApply pointe vers send-file-btn
+    
+    // NOTE: receiverPassword (password-input) keyup listener aussi attaché dynamiquement
+    // pour éviter d'appeler applyReceiverPassword() en mode créateur
     
     // Bouton "Recevoir le fichier"
     if (elements.receiveFileBtn) {
