@@ -2934,7 +2934,13 @@ function clearFileSelection() {
 }
 
 async function applyReceiverPassword() {
+    console.log('🔐 [applyReceiverPassword] Appelé');
+    console.log('   passwordSaltB64:', passwordSaltB64);
+    console.log('   usePassword:', usePassword);
+    console.log('   passwordRequired:', passwordRequired);
+    
     if (!passwordSaltB64) {
+        console.error('❌ [applyReceiverPassword] Salt manquant!');
         showError('Lien invalide : salt manquant.');
         return;
     }
@@ -3254,6 +3260,7 @@ function handleHashConnection(hash) {
     // Mode destinataire - cacher la sélection de mode
     elements.modeSelection.classList.add('hidden');
     
+    console.log('🔗 [handleHashConnection] Parsing hash:', hash);
     const parts = hash.split('_');
     roomId = parts[0];
     
@@ -3268,9 +3275,13 @@ function handleHashConnection(hash) {
         sessionMode = 'file'; // Par défaut pour les anciens liens
         keyOrPasswordIndex = 1; // Pas de mode explicite, la clé/pwd commence à l'index 1
     }
+    
+    console.log('🔗 [handleHashConnection] roomId:', roomId, 'mode:', sessionMode);
+    console.log('🔗 [handleHashConnection] Type de lien (parts[' + keyOrPasswordIndex + ']):', parts[keyOrPasswordIndex]);
 
     // Cas lien protégé par mot de passe : roomId_mode_pwd_salt_iterations
     if (parts[keyOrPasswordIndex] === 'pwd') {
+        console.log('🔐 [handleHashConnection] Lien avec MOT DE PASSE détecté');
         isReceiver = true;
         usePassword = true;
         passwordRequired = true;
@@ -3301,10 +3312,12 @@ function handleHashConnection(hash) {
     }
     // Cas ECDH (échange de clés Diffie-Hellman) : roomId_mode_ecdh
     else if (parts[keyOrPasswordIndex] === 'ecdh') {
+        console.log('🔑 [handleHashConnection] Lien ECDH détecté');
         isReceiver = true;
         usePassword = false;
         passwordRequired = false;
         passwordSaltB64 = null;
+        console.log('🔑 [handleHashConnection] Variables reset - usePassword:', usePassword, 'passwordSaltB64:', passwordSaltB64);
         
         elements.receiverSection.classList.remove('hidden');
         elements.receiverStatus.textContent = 'Échange de clés sécurisé en cours...';
