@@ -1460,7 +1460,6 @@ function connectWebSocket() {
     
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        console.log('📨 [WS] Message reçu:', data.type, data);
         handleWebSocketMessage(data);
     };
     
@@ -1796,7 +1795,6 @@ function handleWebSocketMessage(data) {
                         console.log('🔐 [ECDH] Clé AES dérivée avec succès (créateur)');
                         
                         // Initialiser le Double Ratchet (créateur = initiateur)
-                        console.log('🔍 DEBUG créateur: cryptoKey après dérivation:', !!cryptoKey, 'fromId:', data.fromId);
                         if (cryptoKey) {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                             const sharedSecret = new Uint8Array(keyMaterial);
@@ -1817,7 +1815,6 @@ function handleWebSocketMessage(data) {
                                 to: data.fromId,
                                 publicKey: Array.from(dhPublicKey)
                             }));
-                            console.log('📤 Clé DH envoyée au receiver', data.fromId);
                         } else {
                             console.error('❌ cryptoKey null après deriveSharedKey (créateur)!');
                         }
@@ -1842,7 +1839,6 @@ function handleWebSocketMessage(data) {
                         console.log('🔐 [ECDH] Clé AES dérivée avec succès (receiver)');
                         
                         // Initialiser le Double Ratchet (receiver = non-initiateur)
-                        console.log('🔍 DEBUG: cryptoKey après dérivation:', !!cryptoKey, 'fromId:', data.fromId);
                         if (cryptoKey) {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                             const sharedSecret = new Uint8Array(keyMaterial);
@@ -1850,13 +1846,10 @@ function handleWebSocketMessage(data) {
                             console.log('🔐 Double Ratchet initialisé (receiver) pour', data.fromId);
                             
                             // Traiter les double-ratchet-init en attente
-                            console.log('🔍 [DEBUG] Vérif pending pour', data.fromId, '- hasPending:', pendingDoubleRatchetInits.has(data.fromId));
                             if (pendingDoubleRatchetInits.has(data.fromId)) {
                                 const pending = pendingDoubleRatchetInits.get(data.fromId);
-                                console.log('🔄 [DR] Traitement du message bufferisé pour', data.fromId);
                                 await completeDoubleRatchetHandshake(data.fromId, pending.dhPublicKey);
                                 pendingDoubleRatchetInits.delete(data.fromId);
-                                console.log('✅ Pending init traité pour', data.fromId);
                             }
                             
                             // Envoyer la clé publique DH via signaling
@@ -2197,28 +2190,18 @@ async function handleAuthResponse(data) {
 }
 
 async function handleDoubleRatchetInit(data, fromOdId) {
-    console.log('🔍 [DEBUG] handleDoubleRatchetInit appelé:', {
-        fromOdId, 
-        hasDhPublicKey: !!data.dhPublicKey, 
-        hasCryptoKey: !!cryptoKey,
-        dhPublicKeyLength: data.dhPublicKey?.length
-    });
-    
     if (!fromOdId || !data.dhPublicKey) {
-        console.error('❌ [DR Init] fromOdId ou dhPublicKey manquant');
         return;
     }
     
     // Si cryptoKey n'est pas encore disponible, bufferiser et attendre
     if (!cryptoKey) {
-        console.log('⏳ [DR Init] cryptoKey pas encore disponible, buffering pour', fromOdId);
         pendingDoubleRatchetInits.set(fromOdId, { dhPublicKey: data.dhPublicKey });
         return;
     }
     
     // Si le Double Ratchet n'est pas encore initialisé, bufferiser aussi
     if (!doubleRatchetState.has(fromOdId)) {
-        console.log('⏳ [DR Init] Double Ratchet pas encore init, buffering pour', fromOdId);
         pendingDoubleRatchetInits.set(fromOdId, { dhPublicKey: data.dhPublicKey });
         return;
     }
