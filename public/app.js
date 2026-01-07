@@ -579,7 +579,7 @@ async function deriveSharedKey(theirPublicKeyB64) {
     );
     cryptoIV = new Uint8Array(ivMaterial).slice(0, 12);
     
-    console.log('🔐 Clé AES dérivée via ECDH');
+    // Clé AES dérivée
     return true;
 }
 
@@ -649,6 +649,11 @@ function handleECDHPublicKey(fromOdId, publicKeyB64) {
  * Chaque conversation peer↔peer a son propre ratchet
  */
 let doubleRatchetState = new Map(); // Map<odId, {rootKey, sendChain, recvChain, dhRatchet, skippedKeys}>
+
+/**
+ * Buffer pour les messages double-ratchet-init reçus avant l'initialisation
+ */
+let pendingDoubleRatchetInits = new Map(); // Map<odId, {dhPublicKey}>
 
 /**
  * Structure du ratchet pour une paire de peers:
@@ -848,7 +853,7 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
         
         doubleRatchetState.set(odId, state);
         
-        console.log('🔐 Double Ratchet initialisé pour', odId, '| Initiateur:', isInitiator);
+        // Double Ratchet initialisé
         return dhPublicKeyB64;
         
     } catch (err) {
@@ -1782,7 +1787,13 @@ function handleWebSocketMessage(data) {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                             const sharedSecret = new Uint8Array(keyMaterial);
                             const dhPublicKey = await initializeDoubleRatchet(data.fromId, sharedSecret, true);
-                            console.log('🔐 Double Ratchet initialisé avec', data.fromId, '(créateur)');
+                            
+                            // Traiter les double-ratchet-init en attente
+                            if (pendingDoubleRatchetInits.has(data.fromId)) {
+                                const pending = pendingDoubleRatchetInits.get(data.fromId);
+                                await completeDoubleRatchetHandshake(data.fromId, pending.dhPublicKey);
+                                pendingDoubleRatchetInits.delete(data.fromId);
+                            }
                             
                             // Envoyer la clé publique DH via signaling
                             ws.send(JSON.stringify({
@@ -1816,7 +1827,13 @@ function handleWebSocketMessage(data) {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                             const sharedSecret = new Uint8Array(keyMaterial);
                             const dhPublicKey = await initializeDoubleRatchet(data.fromId, sharedSecret, false);
-                            console.log('🔐 Double Ratchet initialisé avec', data.fromId, '(receiver)');
+                            
+                            // Traiter les double-ratchet-init en attente
+                            if (pendingDoubleRatchetInits.has(data.fromId)) {
+                                const pending = pendingDoubleRatchetInits.get(data.fromId);
+                                await completeDoubleRatchetHandshake(data.fromId, pending.dhPublicKey);
+                                pendingDoubleRatchetInits.delete(data.fromId);
+                            }
                             
                             // Envoyer la clé publique DH via signaling
                             ws.send(JSON.stringify({
@@ -1992,7 +2009,7 @@ async function broadcastToAllPeers(data) {
                     const plaintext = new TextEncoder().encode(dataStr);
                     const encrypted = await sendMessageWithDoubleRatchet(odId, plaintext);
                     p.send(JSON.stringify(encrypted));
-                    console.log('🔐 Message chiffré avec Double Ratchet vers', odId);
+                    // Message chiffré
                 } else {
                     // Fallback: envoi en clair (pour compatibilité temporaire)
                     p.send(dataStr);
@@ -2154,19 +2171,20 @@ async function handleAuthResponse(data) {
 }
 
 async function handleDoubleRatchetInit(data, fromOdId) {
-    console.log('🔐 Réception double-ratchet-init de', fromOdId);
-    
     if (!fromOdId || !data.dhPublicKey) {
-        console.error('❌ double-ratchet-init invalide');
+        return;
+    }
+    
+    // Si le Double Ratchet n'est pas encore initialisé, bufferiser
+    if (!doubleRatchetState.has(fromOdId)) {
+        pendingDoubleRatchetInits.set(fromOdId, { dhPublicKey: data.dhPublicKey });
         return;
     }
     
     try {
-        // Compléter le handshake avec leur clé DH publique
         await completeDoubleRatchetHandshake(fromOdId, data.dhPublicKey);
-        console.log('✅ Double Ratchet handshake complété pour', fromOdId);
     } catch (err) {
-        console.error('❌ Erreur lors du handshake Double Ratchet:', err);
+        console.error('❌ Handshake Double Ratchet:', err.message);
     }
 }
 
@@ -2188,7 +2206,7 @@ async function handleDoubleRatchetMessage(encrypted, fromOdId) {
         const decryptedText = new TextDecoder().decode(decrypted);
         const originalData = JSON.parse(decryptedText);
         
-        console.log('🔓 Message déchiffré avec Double Ratchet de', fromOdId);
+        // Message déchiffré
         
         // Dispatcher vers le bon handler selon le type
         switch (originalData.type) {
