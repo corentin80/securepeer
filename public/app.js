@@ -1795,16 +1795,19 @@ function handleWebSocketMessage(data) {
                         console.log('🔐 [ECDH] Clé AES dérivée avec succès (créateur)');
                         
                         // Initialiser le Double Ratchet (créateur = initiateur)
+                        console.log('🔍 DEBUG créateur: cryptoKey après dérivation:', !!cryptoKey, 'fromId:', data.fromId);
                         if (cryptoKey) {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                             const sharedSecret = new Uint8Array(keyMaterial);
                             const dhPublicKey = await initializeDoubleRatchet(data.fromId, sharedSecret, true);
+                            console.log('🔐 Double Ratchet initialisé (créateur) pour', data.fromId);
                             
                             // Traiter les double-ratchet-init en attente
                             if (pendingDoubleRatchetInits.has(data.fromId)) {
                                 const pending = pendingDoubleRatchetInits.get(data.fromId);
                                 await completeDoubleRatchetHandshake(data.fromId, pending.dhPublicKey);
                                 pendingDoubleRatchetInits.delete(data.fromId);
+                                console.log('✅ Pending init traité (créateur) pour', data.fromId);
                             }
                             
                             // Envoyer la clé publique DH via signaling
@@ -1813,6 +1816,9 @@ function handleWebSocketMessage(data) {
                                 to: data.fromId,
                                 publicKey: Array.from(dhPublicKey)
                             }));
+                            console.log('📤 Clé DH envoyée au receiver', data.fromId);
+                        } else {
+                            console.error('❌ cryptoKey null après deriveSharedKey (créateur)!');
                         }
                         
                         // Envoyer ma clé publique en retour
