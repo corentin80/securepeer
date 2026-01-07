@@ -3617,12 +3617,16 @@ function setupLanguageSelector() {
 let currentLanguage = localStorage.getItem('language') || 'fr';
 
 function setLanguage(lang) {
+    console.log('🌐 setLanguage called with:', lang);
     currentLanguage = lang;
     localStorage.setItem('language', currentLanguage);
+    console.log('🌐 currentLanguage is now:', currentLanguage);
     updateLanguage();
 }
 
 function updateLanguage() {
+    console.log('🌐 updateLanguage called, currentLanguage:', currentLanguage);
+    
     const languageToggle = document.getElementById('language-toggle');
     const langNames = {
         fr: '🇫🇷 FR',
@@ -3634,6 +3638,7 @@ function updateLanguage() {
     
     if (languageToggle) {
         languageToggle.textContent = langNames[currentLanguage] || langNames.fr;
+        console.log('🌐 Button text updated to:', langNames[currentLanguage]);
     }
     
     // Mettre à jour l'option active
