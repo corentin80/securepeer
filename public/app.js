@@ -1,6 +1,6 @@
-﻿/**
+/**
  * P2P File Transfer - Application principale
- * Transfert de fichiers chiffrÃ© E2E via WebRTC
+ * Transfert de fichiers chiffré E2E via WebRTC
  */
 
 // ===== CONFIGURATION =====
@@ -12,15 +12,15 @@ const STUN_SERVERS = [
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' }
 ];
-const KDF_ITERATIONS = 200000; // itÃ©rations PBKDF2 pour le mot de passe
+const KDF_ITERATIONS = 200000; // itérations PBKDF2 pour le mot de passe
 const PASSWORD_SALT_BYTES = 16;
 
-// ===== Ã‰TAT GLOBAL =====
+// ===== ÉTAT GLOBAL =====
 let ws = null;
 let peers = new Map(); // Map<odId, SimplePeer> - un peer par participant
 let myOdId = null; // Mon identifiant unique dans la room
 let participants = new Map(); // Map<odId, {pseudo, isCreator}> - liste des participants
-let isCreator = false; // Suis-je le crÃ©ateur de la room ?
+let isCreator = false; // Suis-je le créateur de la room ?
 let selectedFile = null;
 let selectedFileNameOverride = null;
 let cryptoKey = null;
@@ -47,43 +47,43 @@ let userPseudo = ''; // Pseudo de l'utilisateur actuel
 let remoteUserPseudo = ''; // Pseudo de l'autre utilisateur (legacy, pour 1:1)
 
 // Chat UI state
-let replyToMessageId = null; // message cible pour une rÃ©ponse/quote
-let editingMessageId = null; // message en cours d'Ã©dition
+let replyToMessageId = null; // message cible pour une réponse/quote
+let editingMessageId = null; // message en cours d'édition
 let typingSignalTimeout = null; // debounce pour signaux "typing"
-let typingIndicatorTimer = null; // timer d'effacement du statut "X Ã©crit..."
+let typingIndicatorTimer = null; // timer d'effacement du statut "X écrit..."
 
 // Chat search and pinned messages
 let chatSearchQuery = '';
 let chatSearchUserFilter = '';
-let pinnedMessageIds = new Set(); // IDs des messages Ã©pinglÃ©s
+let pinnedMessageIds = new Set(); // IDs des messages épinglés
 
-// Messages Ã©phÃ©mÃ¨res
-let ephemeralMode = true; // ActivÃ© par dÃ©faut pour la sÃ©curitÃ©
-let ephemeralDuration = 30; // secondes par dÃ©faut
+// Messages éphémères
+let ephemeralMode = true; // Activé par défaut pour la sécurité
+let ephemeralDuration = 30; // secondes par défaut
 let ephemeralCountdowns = new Map(); // Map<messageId, intervalId> - timers de countdown
 
 // Session security options
 let sessionOptions = {
-    expirationMinutes: 0,      // 0 = illimitÃ©
+    expirationMinutes: 0,      // 0 = illimité
     maxParticipants: 20,       // 1-20
     requireApproval: false,    // Approbation manuelle des participants
-    autoLock: false,           // Verrouiller aprÃ¨s 1er participant
-    isLocked: false            // Ã‰tat actuel du verrouillage
+    autoLock: false,           // Verrouiller après 1er participant
+    isLocked: false            // État actuel du verrouillage
 };
 let pendingApprovals = new Map(); // Map<odId, {pseudo, timestamp}> - participants en attente d'approbation
 
-// ===== ECDH (Diffie-Hellman) Ã‰tat =====
-let ecdhKeyPair = null; // Ma paire de clÃ©s ECDH {privateKey, publicKey}
-let ecdhPublicKeyB64 = null; // Ma clÃ© publique en base64 pour partage
-let pendingKeyExchanges = new Map(); // Map<odId, {publicKeyB64, resolved}> - Ã©changes en attente
-let keyExchangeResolvers = new Map(); // Map<odId, {resolve, reject}> - promesses d'Ã©change
+// ===== ECDH (Diffie-Hellman) État =====
+let ecdhKeyPair = null; // Ma paire de clés ECDH {privateKey, publicKey}
+let ecdhPublicKeyB64 = null; // Ma clé publique en base64 pour partage
+let pendingKeyExchanges = new Map(); // Map<odId, {publicKeyB64, resolved}> - échanges en attente
+let keyExchangeResolvers = new Map(); // Map<odId, {resolve, reject}> - promesses d'échange
 
 // ===== SAFETY NUMBERS =====
 let myFingerprint = null; // Mon fingerprint (safety number)
 let peerFingerprints = new Map(); // Map<odId, fingerprint> - fingerprints de session actuelle
 let knownFingerprints = new Map(); // Map<pseudo, fingerprint> - fingerprints connus persistants
 
-// ===== Ã‰LÃ‰MENTS DOM =====
+// ===== ÉLÉMENTS DOM =====
 const elements = {
     // Landing page
     landingPage: document.getElementById('landing-page'),
@@ -121,44 +121,44 @@ const elements = {
     linkStatus: document.getElementById('link-status'),
     connectedUsersSection: document.getElementById('connected-users-section'),
     connectedUsersDropdown: document.getElementById('connected-users-dropdown'),
-    // UnifiÃ©: receiver utilise les mÃªmes Ã©lÃ©ments
+    // Unifié: receiver utilise les mêmes éléments
     receiverConnectedUsersSection: document.getElementById('connected-users-section'),
     receiverConnectedUsersDropdown: document.getElementById('connected-users-dropdown'),
     
-    // Chat (unifiÃ© - utilisÃ© par tous)
+    // Chat (sender side)
     chatSection: document.getElementById('chat-section'),
     chatMessages: document.getElementById('chat-messages'),
     chatInput: document.getElementById('chat-input'),
     chatSend: document.getElementById('chat-send'),
     chatStatus: document.getElementById('chat-status'),
     
-    // Receiver (Ã©lÃ©ments spÃ©cifiques pour mot de passe / fichiers entrants)
-    receiverSection: document.getElementById('sender-section'), // UnifiÃ©: utilise sender-section
-    receiverPasswordBlock: document.getElementById('password-block'), // UnifiÃ©: utilise password-block
-    receiverPassword: document.getElementById('password-input'), // UnifiÃ©: utilise password-input
-    receiverPasswordApply: document.getElementById('send-file-btn'), // UnifiÃ©
-    incomingFileName: document.getElementById('file-name'), // UnifiÃ©
-    incomingFileSize: document.getElementById('file-size'), // UnifiÃ©
-    receiverStatus: document.getElementById('link-status'), // UnifiÃ©
-    receiveFileBtn: document.getElementById('send-file-btn'), // UnifiÃ©
+    // Receiver (unifié: utilise les mêmes éléments que sender)
+    receiverSection: document.getElementById('sender-section'),
+    receiverPasswordBlock: document.getElementById('password-block'),
+    receiverPassword: document.getElementById('password-input'),
+    receiverPasswordApply: document.getElementById('send-file-btn'),
+    incomingFileName: document.getElementById('file-name'),
+    incomingFileSize: document.getElementById('file-size'),
+    receiverStatus: document.getElementById('link-status'),
+    receiveFileBtn: document.getElementById('send-file-btn'),
     
-    // Chat receiver = Chat unifiÃ©
-    receiverChatSection: document.getElementById('chat-section'), // UnifiÃ©
-    receiverChatMessages: document.getElementById('chat-messages'), // UnifiÃ©
-    receiverChatInput: document.getElementById('chat-input'), // UnifiÃ©
-    receiverChatSend: document.getElementById('chat-send'), // UnifiÃ©
-    receiverChatStatus: document.getElementById('chat-status'), // UnifiÃ©
+    // Chat receiver = Chat unifié
+    receiverChatSection: document.getElementById('chat-section'),
+    receiverChatMessages: document.getElementById('chat-messages'),
+    receiverChatInput: document.getElementById('chat-input'),
+    receiverChatSend: document.getElementById('chat-send'),
+    receiverChatStatus: document.getElementById('chat-status'),
     
-    // Both mode - file sections (unifiÃ©)
+    // Both mode - file sections
     bothFileSection: document.getElementById('both-file-section'),
     bothFileList: document.getElementById('both-file-list'),
     bothFileInput: document.getElementById('both-file-input'),
     bothFileSend: document.getElementById('both-file-send'),
-    receiverBothFileSection: document.getElementById('both-file-section'), // UnifiÃ©
-    receiverBothFileList: document.getElementById('both-file-list'), // UnifiÃ©
-    receiverBothFileInput: document.getElementById('both-file-input'), // UnifiÃ©
-    receiverBothFileSend: document.getElementById('both-file-send'), // UnifiÃ©
-    receiverTitle: document.getElementById('progress-title'), // UnifiÃ©,
+    receiverBothFileSection: document.getElementById('both-file-section'),
+    receiverBothFileList: document.getElementById('both-file-list'),
+    receiverBothFileInput: document.getElementById('both-file-input'),
+    receiverBothFileSend: document.getElementById('both-file-send'),
+    receiverTitle: document.getElementById('progress-title'),
     
     // Progress
     progressSection: document.getElementById('progress-section'),
@@ -219,10 +219,10 @@ function showError(message) {
     elements.errorSection.classList.remove('hidden');
 }
 
-// ===== SYSTÃˆME D'APPROBATION ET VERROUILLAGE =====
+// ===== SYSTÈME D'APPROBATION ET VERROUILLAGE =====
 
 function showApprovalRequest(odId, pseudo) {
-    // CrÃ©er une popup pour approuver/refuser
+    // Créer une popup pour approuver/refuser
     const existing = document.querySelector('.approval-popup');
     if (existing) existing.remove();
     
@@ -230,11 +230,11 @@ function showApprovalRequest(odId, pseudo) {
     popup.className = 'approval-popup';
     popup.innerHTML = `
         <div class="approval-content">
-            <h3>âœ‹ Demande d'accÃ¨s</h3>
+            <h3>✋ Demande d'accès</h3>
             <p><strong>${escapeHtml(pseudo)}</strong> souhaite rejoindre la session</p>
             <div class="approval-actions">
-                <button class="btn btn-success approve-btn" data-odid="${odId}">âœ“ Accepter</button>
-                <button class="btn btn-danger reject-btn" data-odid="${odId}">âœ• Refuser</button>
+                <button class="btn btn-success approve-btn" data-odid="${odId}">✓ Accepter</button>
+                <button class="btn btn-danger reject-btn" data-odid="${odId}">✕ Refuser</button>
             </div>
             <p class="approval-hint">En attente: ${pendingApprovals.size} demande(s)</p>
         </div>
@@ -261,7 +261,7 @@ function approveParticipant(odId) {
             odId: odId
         }));
         pendingApprovals.delete(odId);
-        showToast('âœ… Participant acceptÃ©');
+        showToast('✅ Participant accepté');
         
         // Afficher la prochaine demande s'il y en a
         if (pendingApprovals.size > 0) {
@@ -280,7 +280,7 @@ function rejectParticipant(odId) {
             odId: odId
         }));
         pendingApprovals.delete(odId);
-        showToast('âŒ Participant refusÃ©');
+        showToast('❌ Participant refusé');
         
         // Afficher la prochaine demande s'il y en a
         if (pendingApprovals.size > 0) {
@@ -312,7 +312,7 @@ function updatePendingBadge(count) {
 function updateLockButton() {
     const lockBtn = document.querySelector('.lock-session-btn');
     if (lockBtn) {
-        lockBtn.textContent = sessionOptions.isLocked ? 'ðŸ”“ DÃ©verrouiller' : 'ðŸ”’ Verrouiller';
+        lockBtn.textContent = sessionOptions.isLocked ? '🔓 Déverrouiller' : '🔒 Verrouiller';
         lockBtn.title = sessionOptions.isLocked ? 'Permettre de nouveaux participants' : 'Bloquer les nouveaux participants';
     }
 }
@@ -327,7 +327,7 @@ function toggleSessionLock() {
     }
 }
 
-// ===== SÃ‰CURITÃ‰ - Ã‰chappement HTML pour prÃ©venir XSS =====
+// ===== SÉCURITÉ - Échappement HTML pour prévenir XSS =====
 function escapeHtml(str) {
     if (!str) return '';
     const div = document.createElement('div');
@@ -347,7 +347,7 @@ function fromBase64(b64) {
 
 async function deriveKeyFromPassword(password, saltB64, iterations = KDF_ITERATIONS) {
     if (!window.crypto || !window.crypto.subtle) {
-        throw new Error('La Web Crypto API n\'est pas disponible dans ce navigateur. Utilisez Chrome, Firefox, Edge ou Safari rÃ©cent.');
+        throw new Error('La Web Crypto API n\'est pas disponible dans ce navigateur. Utilisez Chrome, Firefox, Edge ou Safari récent.');
     }
     const enc = new TextEncoder();
     const salt = fromBase64(saltB64);
@@ -379,17 +379,17 @@ function generatePasswordSalt() {
 }
 
 async function generateCryptoKey() {
-    // GÃ©nÃ©rer une clÃ© AES-GCM 256 bits
+    // Générer une clé AES-GCM 256 bits
     cryptoKey = await window.crypto.subtle.generateKey(
         { name: 'AES-GCM', length: 256 },
         true, // extractable
         ['encrypt', 'decrypt']
     );
     
-    // GÃ©nÃ©rer un IV (Initialization Vector) de 12 octets
+    // Générer un IV (Initialization Vector) de 12 octets
     cryptoIV = window.crypto.getRandomValues(new Uint8Array(12));
     
-    console.log('ðŸ” ClÃ© de chiffrement gÃ©nÃ©rÃ©e');
+    console.log('🔐 Clé de chiffrement générée');
 }
 
 async function exportKeyToBase64() {
@@ -410,15 +410,15 @@ async function importKeyFromBase64(base64String) {
         'raw',
         keyData,
         { name: 'AES-GCM', length: 256 },
-        true, // extractable = true pour pouvoir rÃ©-exporter la clÃ©
+        true, // extractable = true pour pouvoir ré-exporter la clé
         ['encrypt', 'decrypt']
     );
     
-    console.log('ðŸ” ClÃ© de chiffrement importÃ©e');
+    console.log('🔐 Clé de chiffrement importée');
 }
 
 async function encryptChunk(data) {
-    // GÃ©nÃ©rer un IV unique pour chaque chunk
+    // Générer un IV unique pour chaque chunk
     const chunkIV = window.crypto.getRandomValues(new Uint8Array(12));
     
     const encrypted = await window.crypto.subtle.encrypt(
@@ -427,7 +427,7 @@ async function encryptChunk(data) {
         data
     );
     
-    // Combiner IV + donnÃ©es chiffrÃ©es
+    // Combiner IV + données chiffrées
     const result = new Uint8Array(chunkIV.length + encrypted.byteLength);
     result.set(chunkIV);
     result.set(new Uint8Array(encrypted), chunkIV.length);
@@ -458,26 +458,26 @@ async function calculateHash(data) {
 // ===== SAFETY NUMBERS (Fingerprint Verification) =====
 
 /**
- * GÃ©nÃ¨re un fingerprint (safety number) depuis une clÃ© publique ECDH
+ * Génère un fingerprint (safety number) depuis une clé publique ECDH
  * Format: 12 groupes de 4 chiffres (style Signal)
- * @param {CryptoKey} publicKey - ClÃ© publique ECDH
- * @returns {Promise<string>} - Fingerprint formatÃ© "1234 5678 9012 ..."
+ * @param {CryptoKey} publicKey - Clé publique ECDH
+ * @returns {Promise<string>} - Fingerprint formaté "1234 5678 9012 ..."
  */
 async function generateFingerprint(publicKey) {
-    // Exporter la clÃ© publique en format brut
+    // Exporter la clé publique en format brut
     const publicKeyBytes = await window.crypto.subtle.exportKey('raw', publicKey);
     
-    // SHA-256 du contenu de la clÃ©
+    // SHA-256 du contenu de la clé
     const hashBuffer = await window.crypto.subtle.digest('SHA-256', publicKeyBytes);
     const hashArray = new Uint8Array(hashBuffer);
     
-    // Convertir en chaÃ®ne de chiffres (prendre 48 chiffres = 12 groupes de 4)
+    // Convertir en chaîne de chiffres (prendre 48 chiffres = 12 groupes de 4)
     let numericString = '';
     for (let i = 0; i < hashArray.length && numericString.length < 48; i++) {
         numericString += hashArray[i].toString().padStart(3, '0');
     }
     
-    // DÃ©couper en groupes de 4 chiffres
+    // Découper en groupes de 4 chiffres
     const groups = [];
     for (let i = 0; i < 48; i += 4) {
         groups.push(numericString.substr(i, 4));
@@ -487,9 +487,9 @@ async function generateFingerprint(publicKey) {
 }
 
 /**
- * GÃ©nÃ¨re un fingerprint depuis une clÃ© publique en base64
- * @param {string} publicKeyB64 - ClÃ© publique ECDH en base64
- * @returns {Promise<string>} - Fingerprint formatÃ©
+ * Génère un fingerprint depuis une clé publique en base64
+ * @param {string} publicKeyB64 - Clé publique ECDH en base64
+ * @returns {Promise<string>} - Fingerprint formaté
  */
 async function generateFingerprintFromB64(publicKeyB64) {
     const publicKeyBytes = Uint8Array.from(atob(publicKeyB64), c => c.charCodeAt(0));
@@ -498,7 +498,7 @@ async function generateFingerprintFromB64(publicKeyB64) {
     const hashBuffer = await window.crypto.subtle.digest('SHA-256', publicKeyBytes);
     const hashArray = new Uint8Array(hashBuffer);
     
-    // Convertir en numÃ©rique
+    // Convertir en numérique
     let numericString = '';
     for (let i = 0; i < hashArray.length && numericString.length < 48; i++) {
         numericString += hashArray[i].toString().padStart(3, '0');
@@ -516,8 +516,8 @@ async function generateFingerprintFromB64(publicKeyB64) {
 // ===== ECDH (Diffie-Hellman Elliptic Curve) =====
 
 /**
- * GÃ©nÃ¨re une paire de clÃ©s ECDH (Elliptic Curve Diffie-Hellman)
- * Utilise la courbe P-256 (secp256r1) recommandÃ©e par le NIST
+ * Génère une paire de clés ECDH (Elliptic Curve Diffie-Hellman)
+ * Utilise la courbe P-256 (secp256r1) recommandée par le NIST
  */
 async function generateECDHKeyPair() {
     ecdhKeyPair = await window.crypto.subtle.generateKey(
@@ -529,14 +529,14 @@ async function generateECDHKeyPair() {
         ['deriveKey', 'deriveBits']
     );
     
-    // Exporter la clÃ© publique en format raw pour partage
+    // Exporter la clé publique en format raw pour partage
     const publicKeyRaw = await window.crypto.subtle.exportKey('raw', ecdhKeyPair.publicKey);
     ecdhPublicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyRaw)));
     
-    // GÃ©nÃ©rer le fingerprint (safety number)
+    // Générer le fingerprint (safety number)
     myFingerprint = await generateFingerprint(ecdhKeyPair.publicKey);
     
-    console.log('ðŸ” Paire de clÃ©s ECDH gÃ©nÃ©rÃ©e');
+    console.log('🔐 Paire de clés ECDH générée');
     return ecdhPublicKeyB64;
 }
 
@@ -570,10 +570,10 @@ async function importECDHKeyPair(exported) {
             ['deriveKey', 'deriveBits']
         );
         
-        // Reconstruire la clÃ© publique depuis le JWK (la clÃ© publique est incluse dans le JWK privÃ©)
+        // Reconstruire la clé publique depuis le JWK (la clé publique est incluse dans le JWK privé)
         const publicKey = await window.crypto.subtle.importKey(
             'jwk',
-            { ...exported.privateKeyJwk, d: undefined }, // Retirer la partie privÃ©e
+            { ...exported.privateKeyJwk, d: undefined }, // Retirer la partie privée
             { name: 'ECDH', namedCurve: 'P-256' },
             true,
             []
@@ -582,27 +582,27 @@ async function importECDHKeyPair(exported) {
         ecdhKeyPair = { privateKey, publicKey };
         ecdhPublicKeyB64 = exported.publicKeyB64;
         
-        // RÃ©gÃ©nÃ©rer le fingerprint depuis la clÃ© publique restaurÃ©e
+        // Régénérer le fingerprint depuis la clé publique restaurée
         myFingerprint = await generateFingerprint(ecdhKeyPair.publicKey);
         
-        console.log('ðŸ” Paire ECDH restaurÃ©e depuis localStorage (fingerprint rÃ©gÃ©nÃ©rÃ©)');
+        console.log('🔐 Paire ECDH restaurée depuis localStorage (fingerprint régénéré)');
         return true;
     } catch (err) {
-        console.error('âŒ Erreur import ECDH:', err);
+        console.error('❌ Erreur import ECDH:', err);
         return false;
     }
 }
 
 /**
- * DÃ©rive une clÃ© AES-256-GCM depuis le secret partagÃ© ECDH
- * @param {string} theirPublicKeyB64 - ClÃ© publique de l'autre partie en base64
+ * Dérive une clé AES-256-GCM depuis le secret partagé ECDH
+ * @param {string} theirPublicKeyB64 - Clé publique de l'autre partie en base64
  */
 async function deriveSharedKey(theirPublicKeyB64) {
     if (!ecdhKeyPair) {
-        throw new Error('Paire ECDH non initialisÃ©e');
+        throw new Error('Paire ECDH non initialisée');
     }
     
-    // Importer la clÃ© publique de l'autre partie
+    // Importer la clé publique de l'autre partie
     const theirPublicKeyRaw = Uint8Array.from(atob(theirPublicKeyB64), c => c.charCodeAt(0));
     const theirPublicKey = await window.crypto.subtle.importKey(
         'raw',
@@ -612,7 +612,7 @@ async function deriveSharedKey(theirPublicKeyB64) {
         []
     );
     
-    // DÃ©river les bits partagÃ©s
+    // Dériver les bits partagés
     const sharedBits = await window.crypto.subtle.deriveBits(
         {
             name: 'ECDH',
@@ -622,7 +622,7 @@ async function deriveSharedKey(theirPublicKeyB64) {
         256 // 256 bits
     );
     
-    // Utiliser HKDF pour dÃ©river une clÃ© AES robuste
+    // Utiliser HKDF pour dériver une clé AES robuste
     const sharedKeyMaterial = await window.crypto.subtle.importKey(
         'raw',
         sharedBits,
@@ -644,18 +644,18 @@ async function deriveSharedKey(theirPublicKeyB64) {
         ['encrypt', 'decrypt']
     );
     
-    // GÃ©nÃ©rer un IV dÃ©terministe basÃ© sur le secret partagÃ© (pour la compatibilitÃ©)
+    // Générer un IV déterministe basé sur le secret partagé (pour la compatibilité)
     const ivMaterial = await window.crypto.subtle.digest('SHA-256', 
         new TextEncoder().encode(btoa(String.fromCharCode(...new Uint8Array(sharedBits))) + '-IV')
     );
     cryptoIV = new Uint8Array(ivMaterial).slice(0, 12);
     
-    // ClÃ© AES dÃ©rivÃ©e
+    // Clé AES dérivée
     return true;
 }
 
 /**
- * Envoie ma clÃ© publique ECDH Ã  un participant via WebSocket
+ * Envoie ma clé publique ECDH à un participant via WebSocket
  */
 function sendECDHPublicKey(targetOdId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -666,16 +666,16 @@ function sendECDHPublicKey(targetOdId) {
         publicKeyB64: ecdhPublicKeyB64
     }));
     
-    console.log('ðŸ“¤ ClÃ© publique ECDH envoyÃ©e Ã :', targetOdId);
+    console.log('📤 Clé publique ECDH envoyée à:', targetOdId);
 }
 
 /**
- * Attend la rÃ©ception de la clÃ© publique d'un participant
- * @returns {Promise<string>} La clÃ© publique reÃ§ue
+ * Attend la réception de la clé publique d'un participant
+ * @returns {Promise<string>} La clé publique reçue
  */
 function waitForECDHPublicKey(fromOdId, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
-        // VÃ©rifier si on a dÃ©jÃ  reÃ§u la clÃ©
+        // Vérifier si on a déjà reçu la clé
         if (pendingKeyExchanges.has(fromOdId)) {
             const exchange = pendingKeyExchanges.get(fromOdId);
             if (exchange.publicKeyB64) {
@@ -684,7 +684,7 @@ function waitForECDHPublicKey(fromOdId, timeoutMs = 30000) {
             }
         }
         
-        // Attendre la rÃ©ception
+        // Attendre la réception
         keyExchangeResolvers.set(fromOdId, { resolve, reject });
         
         // Timeout
@@ -698,36 +698,36 @@ function waitForECDHPublicKey(fromOdId, timeoutMs = 30000) {
 }
 
 /**
- * Handler pour la rÃ©ception d'une clÃ© publique ECDH
+ * Handler pour la réception d'une clé publique ECDH
  */
 async function handleECDHPublicKey(fromOdId, publicKeyB64) {
-    console.log('ðŸ“¥ ClÃ© publique ECDH reÃ§ue de:', fromOdId);
+    console.log('📥 Clé publique ECDH reçue de:', fromOdId);
     
     pendingKeyExchanges.set(fromOdId, { publicKeyB64, resolved: true });
     
-    // GÃ©nÃ©rer et stocker le fingerprint du pair
+    // Générer et stocker le fingerprint du pair
     try {
         const peerFingerprint = await generateFingerprintFromB64(publicKeyB64);
         
-        // RÃ©cupÃ©rer le pseudo de ce peer
+        // Récupérer le pseudo de ce peer
         const participantInfo = participants.get(fromOdId);
         const pseudo = participantInfo ? participantInfo.pseudo : null;
         
-        // Utiliser pseudo_roomId comme clÃ© pour Ã©viter les faux positifs entre rooms diffÃ©rentes
+        // Utiliser pseudo_roomId comme clé pour éviter les faux positifs entre rooms différentes
         const fingerprintKey = pseudo && roomId ? `${pseudo}_${roomId}` : null;
         
-        // VÃ©rifier si le fingerprint a changÃ© pour ce PSEUDO dans cette ROOM (dÃ©tection MITM)
+        // Vérifier si le fingerprint a changé pour ce PSEUDO dans cette ROOM (détection MITM)
         if (fingerprintKey && knownFingerprints.has(fingerprintKey)) {
             const knownFingerprint = knownFingerprints.get(fingerprintKey);
             if (knownFingerprint !== peerFingerprint) {
-                // ALERTE SÃ‰CURITÃ‰: Le fingerprint a changÃ©!
-                console.error('ðŸš¨ ALERTE SÃ‰CURITÃ‰: Fingerprint changÃ© pour', pseudo, 'dans room', roomId);
+                // ALERTE SÉCURITÉ: Le fingerprint a changé!
+                console.error('🚨 ALERTE SÉCURITÉ: Fingerprint changé pour', pseudo, 'dans room', roomId);
                 showSecurityAlert(fromOdId, knownFingerprint, peerFingerprint);
             } else {
-                console.log('âœ… Fingerprint vÃ©rifiÃ© OK pour', pseudo);
+                console.log('✅ Fingerprint vérifié OK pour', pseudo);
             }
         } else if (fingerprintKey) {
-            console.log('â„¹ï¸ Premier fingerprint enregistrÃ© pour', pseudo, 'dans room', roomId);
+            console.log('ℹ️ Premier fingerprint enregistré pour', pseudo, 'dans room', roomId);
         }
         
         // Stocker le fingerprint pour ce pseudo dans cette room
@@ -739,10 +739,10 @@ async function handleECDHPublicKey(fromOdId, publicKeyB64) {
         // Stocker aussi par odId pour la session actuelle
         peerFingerprints.set(fromOdId, peerFingerprint);
     } catch (err) {
-        console.error('âŒ Erreur gÃ©nÃ©ration fingerprint peer:', err);
+        console.error('❌ Erreur génération fingerprint peer:', err);
     }
     
-    // RÃ©soudre la promesse en attente si elle existe
+    // Résoudre la promesse en attente si elle existe
     if (keyExchangeResolvers.has(fromOdId)) {
         const { resolve } = keyExchangeResolvers.get(fromOdId);
         keyExchangeResolvers.delete(fromOdId);
@@ -753,13 +753,13 @@ async function handleECDHPublicKey(fromOdId, publicKeyB64) {
 // ===== DOUBLE RATCHET (Signal Protocol Post-Quantum) =====
 
 /**
- * Ã‰tat du Double Ratchet par paire de peers
- * Chaque conversation peerâ†”peer a son propre ratchet
+ * État du Double Ratchet par paire de peers
+ * Chaque conversation peer↔peer a son propre ratchet
  */
 let doubleRatchetState = new Map(); // Map<odId, {rootKey, sendChain, recvChain, dhRatchet, skippedKeys}>
 
 /**
- * Buffer pour les messages double-ratchet-init reÃ§us avant l'initialisation
+ * Buffer pour les messages double-ratchet-init reçus avant l'initialisation
  */
 let pendingDoubleRatchetInits = new Map(); // Map<odId, {dhPublicKey}>
 
@@ -771,7 +771,7 @@ let lastDoubleRatchetInitSent = new Map(); // Map<odId, timestamp>
 /**
  * Structure du ratchet pour une paire de peers:
  * {
- *   rootKey: Uint8Array(32), // Root key dÃ©rivÃ©e d'ECDH initial
+ *   rootKey: Uint8Array(32), // Root key dérivée d'ECDH initial
  *   sendChain: { chainKey: Uint8Array(32), messageNumber: number },
  *   recvChain: { chainKey: Uint8Array(32), messageNumber: number },
  *   dhRatchet: { 
@@ -786,13 +786,13 @@ let lastDoubleRatchetInitSent = new Map(); // Map<odId, timestamp>
 
 /**
  * HKDF-SHA256 selon RFC 5869
- * Expanded du rootKey en chaÃ®nes de ratcheting
+ * Expanded du rootKey en chaînes de ratcheting
  */
 async function hkdfExpand(prk, info, length) {
     const hash = 'SHA-256';
     const hashLen = 32; // SHA-256 = 32 bytes
     
-    // Nombre d'itÃ©rations N = ceil(L / HashLen)
+    // Nombre d'itérations N = ceil(L / HashLen)
     const N = Math.ceil(length / hashLen);
     let okm = new Uint8Array();
     let t = new Uint8Array();
@@ -819,7 +819,7 @@ async function hkdfExpand(prk, info, length) {
 
 /**
  * HKDF Extract selon RFC 5869
- * DÃ©rive un PRK depuis le secret partagÃ©
+ * Dérive un PRK depuis le secret partagé
  */
 async function hkdfExtract(salt, ikm) {
     const hash = 'SHA-256';
@@ -836,8 +836,8 @@ async function hkdfExtract(salt, ikm) {
 }
 
 /**
- * KDF_RK: DÃ©rive une nouvelle rootKey et une chainKey initiale
- * UtilisÃ© quand le DH ratchet tourne (nouveau ECDH)
+ * KDF_RK: Dérive une nouvelle rootKey et une chainKey initiale
+ * Utilisé quand le DH ratchet tourne (nouveau ECDH)
  */
 async function kdfRK(rootKey, dhSecret) {
     const salt = new TextEncoder().encode('KDF_RK');
@@ -853,8 +853,8 @@ async function kdfRK(rootKey, dhSecret) {
 }
 
 /**
- * KDF_CK: Avance la chaÃ®ne (symmetric ratchet)
- * UtilisÃ© Ã  chaque message envoyÃ©/reÃ§u
+ * KDF_CK: Avance la chaîne (symmetric ratchet)
+ * Utilisé à chaque message envoyé/reçu
  */
 async function kdfCK(chainKey) {
     const hmacKey = await window.crypto.subtle.importKey(
@@ -886,11 +886,11 @@ async function kdfCK(chainKey) {
  * Initialise le Double Ratchet avec X3DH complet
  * @param {string} odId - ID du peer
  * @param {Uint8Array} sharedSecret - Secret d'ECDH initial (256 bits)
- * @param {boolean} isInitiator - True si tu es l'initiateur (dÃ©termine qui envoie en premier)
+ * @param {boolean} isInitiator - True si tu es l'initiateur (détermine qui envoie en premier)
  */
 async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
     try {
-        // DÃ©river rootKey initial depuis le secret partagÃ© ECDH
+        // Dériver rootKey initial depuis le secret partagé ECDH
         const salt = new TextEncoder().encode('SecurePeer-X3DH-Salt');
         const info = new TextEncoder().encode('SecurePeer-Double-Ratchet-Initialization');
         
@@ -900,7 +900,7 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
         const rootKey = expanded.slice(0, 32);
         const initialChainKey = expanded.slice(32, 64);
         
-        // GÃ©nÃ©rer une nouvelle paire DH pour le ratchet
+        // Générer une nouvelle paire DH pour le ratchet
         const dhKeyPair = await window.crypto.subtle.generateKey(
             { name: 'ECDH', namedCurve: 'P-256' },
             true,
@@ -913,7 +913,7 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
         // Initialiser le ratchet selon si tu es initiateur ou non
         let state;
         if (isInitiator) {
-            // Initiateur : sendChain actif, recvChain inactif (attend clÃ© publique du pair)
+            // Initiateur : sendChain actif, recvChain inactif (attend clé publique du pair)
             state = {
                 rootKey,
                 sendChain: {
@@ -924,12 +924,12 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
                 recvChain: {
                     chainKey: initialChainKey,
                     messageNumber: 0,
-                    active: false // N'activera que quand on reÃ§oit la clÃ© DH du pair
+                    active: false // N'activera que quand on reçoit la clé DH du pair
                 },
                 dhRatchet: {
                     keyPair: dhKeyPair,
                     publicKeyB64: dhPublicKeyB64,
-                    theirPublicKeyB64: null, // Ã€ remplir quand on reÃ§oit leur clÃ©
+                    theirPublicKeyB64: null, // À remplir quand on reçoit leur clé
                     numberUsed: 0,
                     lastRatchetTime: Date.now() // Timer pour rotation 30min
                 },
@@ -938,18 +938,18 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
                 dhRatchetMaxAge: 1000 * 60 * 30 // 30 minutes
             };
         } else {
-            // Non-initiateur : recvChain actif, sendChain inactif (attend clÃ© publique du pair)
+            // Non-initiateur : recvChain actif, sendChain inactif (attend clé publique du pair)
             state = {
                 rootKey,
                 sendChain: {
                     chainKey: initialChainKey,
                     messageNumber: 0,
-                    active: false // N'activera que quand on reÃ§oit la clÃ© DH du pair
+                    active: false // N'activera que quand on reçoit la clé DH du pair
                 },
                 recvChain: {
                     chainKey: initialChainKey,
                     messageNumber: 0,
-                    active: true // Non-initiator reÃ§oit en premier
+                    active: true // Non-initiator reçoit en premier
                 },
                 dhRatchet: {
                     keyPair: dhKeyPair,
@@ -966,23 +966,23 @@ async function initializeDoubleRatchet(odId, sharedSecret, isInitiator) {
         
         doubleRatchetState.set(odId, state);
         
-        // Retourner la clÃ© publique DH en Uint8Array
+        // Retourner la clé publique DH en Uint8Array
         return new Uint8Array(dhPublicKeyRaw);
         
     } catch (err) {
-        console.error('âŒ Erreur initialisation Double Ratchet:', err);
+        console.error('❌ Erreur initialisation Double Ratchet:', err);
         throw err;
     }
 }
 
 /**
- * ComplÃ¨te l'initialisation du DH Ratchet quand on reÃ§oit la clÃ© publique du pair
+ * Complète l'initialisation du DH Ratchet quand on reçoit la clé publique du pair
  */
 async function completeDoubleRatchetHandshake(odId, theirPublicKey) {
     try {
         const state = doubleRatchetState.get(odId);
         if (!state) {
-            throw new Error('Double Ratchet non initialisÃ© pour ' + odId);
+            throw new Error('Double Ratchet non initialisé pour ' + odId);
         }
         
         // Convertir en Uint8Array si c'est un Array
@@ -1010,12 +1010,12 @@ async function completeDoubleRatchetHandshake(odId, theirPublicKey) {
             256
         );
         
-        // DÃ©river nouvelle rootKey + chainKey depuis le DH
+        // Dériver nouvelle rootKey + chainKey depuis le DH
         const result = await kdfRK(state.rootKey, new Uint8Array(sharedBits));
         state.rootKey = result.rootKey;
         
-        // Mettre Ã  jour la chainKey de la chaÃ®ne ACTIVE (pas les deux!)
-        // L'initiator met Ã  jour sendChain, le non-initiator met Ã  jour recvChain
+        // Mettre à jour la chainKey de la chaîne ACTIVE (pas les deux!)
+        // L'initiator met à jour sendChain, le non-initiator met à jour recvChain
         if (state.sendChain.active) {
             // Initiator: update sendChain
             state.sendChain.chainKey = result.chainKey;
@@ -1024,7 +1024,7 @@ async function completeDoubleRatchetHandshake(odId, theirPublicKey) {
             state.recvChain.chainKey = result.chainKey;
         }
         
-        // Activer les chaÃ®nes si elles ne sont pas encore actives
+        // Activer les chaînes si elles ne sont pas encore actives
         if (!state.sendChain.active && state.sendChain.messageNumber === 0) {
             state.sendChain.active = true;
         }
@@ -1032,22 +1032,22 @@ async function completeDoubleRatchetHandshake(odId, theirPublicKey) {
             state.recvChain.active = true;
         }
         
-        // RÃ©initialiser le timer DH ratchet aprÃ¨s handshake
+        // Réinitialiser le timer DH ratchet après handshake
         state.dhRatchet.lastRatchetTime = Date.now();
         
     } catch (err) {
-        console.error('âŒ Erreur handshake Double Ratchet:', err);
+        console.error('❌ Erreur handshake Double Ratchet:', err);
         throw err;
     }
 }
 
 /**
- * Encode un message avec header chiffrÃ©
+ * Encode un message avec header chiffré
  * Header = encryptedHeader(messageNumber || dhPublicKey)
  */
 async function encryptMessageHeader(state, plaintext, chainKey, messageNumber) {
     try {
-        // DÃ©river une clÃ© de header depuis la chainKey fournie (non avancÃ©e)
+        // Dériver une clé de header depuis la chainKey fournie (non avancée)
         const headerHmac = await window.crypto.subtle.importKey(
             'raw',
             chainKey,
@@ -1094,20 +1094,20 @@ async function encryptMessageHeader(state, plaintext, chainKey, messageNumber) {
         return result;
         
     } catch (err) {
-        console.error('âŒ Erreur chiffrement header:', err);
+        console.error('❌ Erreur chiffrement header:', err);
         throw err;
     }
 }
 
 /**
  * Envoie un message avec Double Ratchet
- * Effectue le ratcheting symÃ©trique et DH automatiquement
+ * Effectue le ratcheting symétrique et DH automatiquement
  */
 async function sendMessageWithDoubleRatchet(odId, plaintext) {
     try {
         const state = doubleRatchetState.get(odId);
         if (!state) {
-            throw new Error('Double Ratchet non initialisÃ© pour ' + odId);
+            throw new Error('Double Ratchet non initialisé pour ' + odId);
         }
         
         if (!state.sendChain.active) {
@@ -1118,7 +1118,7 @@ async function sendMessageWithDoubleRatchet(odId, plaintext) {
         const currentChainKey = state.sendChain.chainKey;
         const currentMessageNumber = state.sendChain.messageNumber;
         
-        // Avancer la chaÃ®ne symÃ©trique
+        // Avancer la chaîne symétrique
         const { newCK, messageKey } = await kdfCK(state.sendChain.chainKey);
         state.sendChain.chainKey = newCK;
         
@@ -1146,15 +1146,15 @@ async function sendMessageWithDoubleRatchet(odId, plaintext) {
         // Encoder header avec la chainKey et messageNumber AVANT l'avancement
         const headerEncrypted = await encryptMessageHeader(state, encryptedMessage, currentChainKey, currentMessageNumber);
         
-        // DH Ratchet: tous les 100 messages OU aprÃ¨s 30 minutes
+        // DH Ratchet: tous les 100 messages OU après 30 minutes
         state.sendChain.messageNumber++;
         const timeSinceLastRatchet = Date.now() - state.dhRatchet.lastRatchetTime;
         if (state.sendChain.messageNumber % 100 === 0 || timeSinceLastRatchet > state.dhRatchetMaxAge) {
             await performDHRatchet(state);
-            console.log(`ðŸ”„ DH Ratchet dÃ©clenchÃ© (${timeSinceLastRatchet > state.dhRatchetMaxAge ? 'timer 30min' : '100 messages'})`);
+            console.log(`🔄 DH Ratchet déclenché (${timeSinceLastRatchet > state.dhRatchetMaxAge ? 'timer 30min' : '100 messages'})`);
         }
         
-        // RÃ©sultat : Buffer contenant le message chiffrÃ© complet
+        // Résultat : Buffer contenant le message chiffré complet
         return {
             type: 'double-ratchet-message',
             odId: odId,
@@ -1164,19 +1164,19 @@ async function sendMessageWithDoubleRatchet(odId, plaintext) {
         };
         
     } catch (err) {
-        console.error('âŒ Erreur send Double Ratchet:', err);
+        console.error('❌ Erreur send Double Ratchet:', err);
         throw err;
     }
 }
 
 /**
- * ReÃ§oit et dÃ©chiffre un message avec Double Ratchet
+ * Reçoit et déchiffre un message avec Double Ratchet
  */
 async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderDHPublicKeyB64) {
     try {
         const state = doubleRatchetState.get(odId);
         if (!state) {
-            throw new Error('Double Ratchet non initialisÃ© pour ' + odId);
+            throw new Error('Double Ratchet non initialisé pour ' + odId);
         }
         
         const headerEncrypted = Uint8Array.from(atob(headerEncryptedB64), c => c.charCodeAt(0));
@@ -1185,12 +1185,12 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
         const headerIV = headerEncrypted.slice(0, 12);
         const rest = headerEncrypted.slice(12);
         
-        // Essayer de dÃ©chiffrer le header avec la recvChain courante
+        // Essayer de déchiffrer le header avec la recvChain courante
         let plaintext = null;
         let headerDecrypted = null;
         
         try {
-            // DÃ©river la clÃ© de header depuis la recvChain
+            // Dériver la clé de header depuis la recvChain
             const chainKey = state.recvChain.chainKey;
             const headerHmac = await window.crypto.subtle.importKey(
                 'raw',
@@ -1214,7 +1214,7 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
                 ['decrypt']
             );
             
-            // ChiffrÃ© = 69 bytes (4 msg num + 65 DH public)
+            // Chiffré = 69 bytes (4 msg num + 65 DH public)
             const headerCiphertext = rest.slice(0, 85); // 69 + GCM tag (16)
             const messageCiphertext = rest.slice(85);
             
@@ -1229,15 +1229,15 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
             const theirPublicKeyRaw = headerDecrypted.slice(4, 69);
             const theirPublicKeyB64 = btoa(String.fromCharCode(...theirPublicKeyRaw));
             
-            // Si leur clÃ© DH a changÃ©, effectuer DH ratchet
+            // Si leur clé DH a changé, effectuer DH ratchet
             if (state.dhRatchet.theirPublicKeyB64 && theirPublicKeyB64 !== state.dhRatchet.theirPublicKeyB64) {
-                console.log('ðŸ”„ DH Ratchet dÃ©tectÃ© (leur clÃ© a changÃ©)');
+                console.log('🔄 DH Ratchet détecté (leur clé a changé)');
                 
-                // Calculer skipped keys pour les messages entre ancien et nouveau numÃ©ro
+                // Calculer skipped keys pour les messages entre ancien et nouveau numéro
                 const oldRecvNum = state.recvChain.messageNumber;
                 const newRecvNum = messageNumber;
                 
-                // Stocker les clÃ©s sautÃ©es (max 100)
+                // Stocker les clés sautées (max 100)
                 for (let i = oldRecvNum; i < newRecvNum && i < oldRecvNum + 100; i++) {
                     const { newCK, messageKey } = await kdfCK(state.recvChain.chainKey);
                     state.recvChain.chainKey = newCK;
@@ -1265,14 +1265,14 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
                     256
                 );
                 
-                // DÃ©river new rootKey
+                // Dériver new rootKey
                 const kdfResult = await kdfRK(state.rootKey, new Uint8Array(sharedBits));
                 state.rootKey = kdfResult.rootKey;
                 state.recvChain.chainKey = kdfResult.chainKey;
                 state.recvChain.messageNumber = 0;
             }
             
-            // Avancer recvChain jusqu'au numÃ©ro du message
+            // Avancer recvChain jusqu'au numéro du message
             for (let i = state.recvChain.messageNumber; i < messageNumber; i++) {
                 const { newCK, messageKey } = await kdfCK(state.recvChain.chainKey);
                 state.recvChain.chainKey = newCK;
@@ -1289,7 +1289,7 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
             state.recvChain.chainKey = newCK;
             state.recvChain.messageNumber = messageNumber + 1;
             
-            // DÃ©chiffrer le message avec le messageKey
+            // Déchiffrer le message avec le messageKey
             const messageIV = messageCiphertext.slice(0, 12);
             const messageCipherOnly = messageCiphertext.slice(12);
             
@@ -1308,7 +1308,7 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
             ));
             
         } catch (err) {
-            console.warn('âš ï¸ Impossible dÃ©chiffrer avec chaÃ®ne actuelle, essai skipped keys buffer...');
+            console.warn('⚠️ Impossible déchiffrer avec chaîne actuelle, essai skipped keys buffer...');
             
             // Essayer avec les skipped keys
             // Extraire messageNumber du header
@@ -1370,27 +1370,27 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
                         messageCipherOnly
                     ));
                     
-                    // Zeroize et delete la clÃ© utilisÃ©e
+                    // Zeroize et delete la clé utilisée
                     skippedKeyEntry.key.fill(0);
                     state.skippedKeys.delete(keyId);
                     
-                    console.log('âœ… Message dÃ©chiffrÃ© avec skipped key:', messageNumber);
+                    console.log('✅ Message déchiffré avec skipped key:', messageNumber);
                 } else {
-                    throw new Error('ClÃ© sautÃ©e non trouvÃ©e dans le buffer');
+                    throw new Error('Clé sautée non trouvée dans le buffer');
                 }
             } catch (innerErr) {
-                console.error('âŒ Erreur avec skipped keys:', innerErr.message, innerErr);
+                console.error('❌ Erreur avec skipped keys:', innerErr.message, innerErr);
                 throw err; // Throw original error
             }
         }
         
-        // Nettoyer les clÃ©s expirÃ©es
+        // Nettoyer les clés expirées
         cleanupSkippedKeys(state);
         
         return plaintext;
         
     } catch (err) {
-        console.error('âŒ Erreur receive Double Ratchet:', err);
+        console.error('❌ Erreur receive Double Ratchet:', err);
         throw err;
     }
 }
@@ -1400,7 +1400,7 @@ async function receiveMessageWithDoubleRatchet(odId, headerEncryptedB64, senderD
  */
 async function performDHRatchet(state) {
     try {
-        // GÃ©nÃ©rer une nouvelle paire ECDH
+        // Générer une nouvelle paire ECDH
         const newKeyPair = await window.crypto.subtle.generateKey(
             { name: 'ECDH', namedCurve: 'P-256' },
             true,
@@ -1410,7 +1410,7 @@ async function performDHRatchet(state) {
         const newPublicKeyRaw = await window.crypto.subtle.exportKey('raw', newKeyPair.publicKey);
         const newPublicKeyB64 = btoa(String.fromCharCode(...new Uint8Array(newPublicKeyRaw)));
         
-        // DÃ©river le secret avec leur derniÃ¨re clÃ© publique
+        // Dériver le secret avec leur dernière clé publique
         if (state.dhRatchet.theirPublicKeyB64) {
             const theirPublicKeyRaw = Uint8Array.from(atob(state.dhRatchet.theirPublicKeyB64), c => c.charCodeAt(0));
             const theirPublicKey = await window.crypto.subtle.importKey(
@@ -1427,35 +1427,35 @@ async function performDHRatchet(state) {
                 256
             );
             
-            // DÃ©river new rootKey + initChainKey
+            // Dériver new rootKey + initChainKey
             const result = await kdfRK(state.rootKey, new Uint8Array(sharedBits));
             state.rootKey = result.rootKey;
             state.sendChain.chainKey = result.chainKey;
             state.sendChain.messageNumber = 0;
         }
         
-        // Mettre Ã  jour la paire ECDH
+        // Mettre à jour la paire ECDH
         state.dhRatchet.keyPair = newKeyPair;
         state.dhRatchet.publicKeyB64 = newPublicKeyB64;
         state.dhRatchet.numberUsed = state.sendChain.messageNumber;
-        state.dhRatchet.lastRatchetTime = Date.now(); // RÃ©initialiser le timer
+        state.dhRatchet.lastRatchetTime = Date.now(); // Réinitialiser le timer
         
-        console.log('ðŸ”„ DH Ratchet effectuÃ© | Nouvelle clÃ© DH:', newPublicKeyB64.substring(0, 10) + '...');
+        console.log('🔄 DH Ratchet effectué | Nouvelle clé DH:', newPublicKeyB64.substring(0, 10) + '...');
         
     } catch (err) {
-        console.error('âŒ Erreur DH Ratchet:', err);
+        console.error('❌ Erreur DH Ratchet:', err);
         throw err;
     }
 }
 
 /**
- * Nettoie les clÃ©s sautÃ©es expirÃ©es
+ * Nettoie les clés sautées expirées
  */
 function cleanupSkippedKeys(state) {
     const now = Date.now();
     for (const [keyId, entry] of state.skippedKeys.entries()) {
         if (entry.expiry < now) {
-            // Zeroize la clÃ© avant suppression
+            // Zeroize la clé avant suppression
             entry.key.fill(0);
             state.skippedKeys.delete(keyId);
         }
@@ -1463,24 +1463,24 @@ function cleanupSkippedKeys(state) {
 }
 
 /**
- * Zeroize complÃ¨te l'Ã©tat du ratchet (logout)
+ * Zeroize complète l'état du ratchet (logout)
  */
 function zeroizeDoubleRatchet(odId) {
     const state = doubleRatchetState.get(odId);
     if (!state) return;
     
-    // Zeroize toutes les clÃ©s
+    // Zeroize toutes les clés
     if (state.rootKey) state.rootKey.fill(0);
     if (state.sendChain.chainKey) state.sendChain.chainKey.fill(0);
     if (state.recvChain.chainKey) state.recvChain.chainKey.fill(0);
     
-    // Zeroize les clÃ©s sautÃ©es
+    // Zeroize les clés sautées
     for (const [_, entry] of state.skippedKeys.entries()) {
         entry.key.fill(0);
     }
     
     doubleRatchetState.delete(odId);
-    console.log('ðŸ” Double Ratchet zÃ©roisÃ© pour', odId);
+    console.log('🔐 Double Ratchet zéroisé pour', odId);
 }
 
 // ===== WEBSOCKET =====
@@ -1492,19 +1492,19 @@ function connectWebSocket() {
     ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
-        console.log('ðŸŒ WebSocket connectÃ©');
+        console.log('🌐 WebSocket connecté');
         
-        // RÃ©cupÃ©rer le pseudo (dÃ©jÃ  dÃ©fini avant connectWebSocket)
-        // userPseudo est dÃ©fini dans setupPseudoSection()
+        // Récupérer le pseudo (déjà défini avant connectWebSocket)
+        // userPseudo est défini dans setupPseudoSection()
         
-        // VÃ©rifier si on a une session sauvegardÃ©e (reconnexion)
+        // Vérifier si on a une session sauvegardée (reconnexion)
         const savedSession = localStorage.getItem('securepeer_session');
         const isReconnection = savedSession !== null;
         const savedOdId = localStorage.getItem('securepeer_odid');
 
         if (isReceiver && !isReconnection) {
-            // Mode destinataire pour la premiÃ¨re fois : rejoindre la room
-            console.log('ðŸ“¥ PremiÃ¨re connexion destinataire');
+            // Mode destinataire pour la première fois : rejoindre la room
+            console.log('📥 Première connexion destinataire');
             ws.send(JSON.stringify({
                 type: 'join-room',
                 roomId: roomId,
@@ -1513,7 +1513,7 @@ function connectWebSocket() {
             }));
         } else if (isReceiver && isReconnection) {
             // Destinataire qui se reconnecte
-            console.log('ðŸ”„ Reconnexion destinataire');
+            console.log('🔄 Reconnexion destinataire');
             ws.send(JSON.stringify({
                 type: 'join-room',
                 roomId: roomId,
@@ -1521,11 +1521,11 @@ function connectWebSocket() {
                 odId: savedOdId || undefined
             }));
         } else if (roomId && isReconnection) {
-            // Mode expÃ©diteur qui se reconnecte
-            console.log('ðŸ”„ [WS] Reconnexion expÃ©diteur dÃ©tectÃ©e');
-            console.log('   ðŸ“¦ roomId:', roomId);
-            console.log('   ðŸ‘¤ pseudo:', userPseudo);
-            console.log('   ðŸ”‘ odId:', savedOdId);
+            // Mode expéditeur qui se reconnecte
+            console.log('🔄 [WS] Reconnexion expéditeur détectée');
+            console.log('   📦 roomId:', roomId);
+            console.log('   👤 pseudo:', userPseudo);
+            console.log('   🔑 odId:', savedOdId);
             const rejoinMsg = {
                 type: 'rejoin-room',
                 roomId: roomId,
@@ -1533,11 +1533,11 @@ function connectWebSocket() {
                 role: 'sender',
                 odId: savedOdId || undefined
             };
-            console.log('ðŸ“¤ [WS] Envoi rejoin-room:', rejoinMsg);
+            console.log('📤 [WS] Envoi rejoin-room:', rejoinMsg);
             ws.send(JSON.stringify(rejoinMsg));
         } else {
-            // Mode expÃ©diteur : crÃ©er une nouvelle room
-            // RÃ©cupÃ©rer les options de sÃ©curitÃ© depuis l'UI
+            // Mode expéditeur : créer une nouvelle room
+            // Récupérer les options de sécurité depuis l'UI
             if (elements.sessionExpiration) {
                 sessionOptions.expirationMinutes = parseInt(elements.sessionExpiration.value) || 0;
             }
@@ -1551,7 +1551,7 @@ function connectWebSocket() {
                 sessionOptions.autoLock = elements.autoLock.checked;
             }
             
-            console.log('ðŸ“¤ CrÃ©ation nouvelle room avec options:', sessionOptions);
+            console.log('📤 Création nouvelle room avec options:', sessionOptions);
             ws.send(JSON.stringify({
                 type: 'create-room',
                 fileInfo: fileInfo,
@@ -1572,11 +1572,11 @@ function connectWebSocket() {
     };
     
     ws.onclose = () => {
-        console.log('ðŸ”Œ WebSocket dÃ©connectÃ©');
+        console.log('🔌 WebSocket déconnecté');
     };
     
     ws.onerror = (error) => {
-        console.error('âŒ Erreur WebSocket:', error);
+        console.error('❌ Erreur WebSocket:', error);
         showError('Erreur de connexion au serveur');
     };
 }
@@ -1594,12 +1594,12 @@ function handleWebSocketMessage(data) {
             break;
             
         case 'room-rejoined':
-            console.log('âœ… [WS] room-rejoined reÃ§u !');
-            console.log('   ðŸ“¦ roomId:', data.roomId);
-            console.log('   ðŸ”‘ odId:', data.odId);
-            console.log('   ðŸ‘¥ participants:', data.participants);
-            console.log('   ðŸ“„ fileInfo:', data.fileInfo);
-            console.log('   ðŸ”— hasReceiver:', data.hasReceiver);
+            console.log('✅ [WS] room-rejoined reçu !');
+            console.log('   📦 roomId:', data.roomId);
+            console.log('   🔑 odId:', data.odId);
+            console.log('   👥 participants:', data.participants);
+            console.log('   📄 fileInfo:', data.fileInfo);
+            console.log('   🔗 hasReceiver:', data.hasReceiver);
             roomId = data.roomId;
             myOdId = data.odId;
             isCreator = true;
@@ -1614,22 +1614,22 @@ function handleWebSocketMessage(data) {
                     }
                 });
                 connectedCount = participants.size;
-                console.log(`ðŸ‘¥ ${connectedCount} participant(s) dÃ©jÃ  dans la room`);
+                console.log(`👥 ${connectedCount} participant(s) déjà dans la room`);
                 
-                // Si on recharge (doubleRatchetState vide), rÃ©init complÃ¨te
+                // Si on recharge (doubleRatchetState vide), réinit complète
                 if (cryptoKey && connectedCount > 0 && doubleRatchetState.size === 0) {
-                    console.log('ðŸ”„ RÃ©initialisation Double Ratchet aprÃ¨s reload crÃ©ateur...');
+                    console.log('🔄 Réinitialisation Double Ratchet après reload créateur...');
                     (async () => {
                         try {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                             const sharedSecret = new Uint8Array(keyMaterial);
                             
                             for (const [odId, info] of participants.entries()) {
-                                // CrÃ©ateur = toujours initiateur
+                                // Créateur = toujours initiateur
                                 const dhPublicKey = await initializeDoubleRatchet(odId, sharedSecret, true);
-                                console.log('ðŸ” Double Ratchet rÃ©initialisÃ© (crÃ©ateur) pour', odId);
+                                console.log('🔐 Double Ratchet réinitialisé (créateur) pour', odId);
                                 
-                                // Envoyer la clÃ© publique DH
+                                // Envoyer la clé publique DH
                                 ws.send(JSON.stringify({
                                     type: 'double-ratchet-init',
                                     to: odId,
@@ -1637,7 +1637,7 @@ function handleWebSocketMessage(data) {
                                 }));
                             }
                         } catch (err) {
-                            console.error('âŒ Erreur rÃ©init Double Ratchet crÃ©ateur:', err);
+                            console.error('❌ Erreur réinit Double Ratchet créateur:', err);
                         }
                     })();
                 }
@@ -1645,16 +1645,16 @@ function handleWebSocketMessage(data) {
             updateConnectedUsersDropdown();
             generateShareLink();
             saveSessionToStorage();
-            // Si un receiver est dÃ©jÃ  lÃ , mettre Ã  jour le statut
+            // Si un receiver est déjà là, mettre à jour le statut
             if (data.hasReceiver || connectedCount > 0) {
-                elements.linkStatus.innerHTML = `<span class="pulse"></span> ðŸ‘¥ ${connectedCount} utilisateur(s) connectÃ©(s)`;
+                elements.linkStatus.innerHTML = `<span class="pulse"></span> 👥 ${connectedCount} utilisateur(s) connecté(s)`;
                 elements.linkStatus.className = 'status status-connected';
             }
             break;
             
         case 'room-joined':
-            console.log('âœ… Room rejointe');
-            console.log('ðŸ“¦ FileInfo reÃ§ue:', data.fileInfo);
+            console.log('✅ Room rejointe');
+            console.log('📦 FileInfo reçue:', data.fileInfo);
             myOdId = data.odId;
             // Sauvegarder l'odId pour reconnexion future
             localStorage.setItem('securepeer_odid', myOdId);
@@ -1665,32 +1665,32 @@ function handleWebSocketMessage(data) {
             }
             
             // Nettoyer et stocker les participants existants
-            participants.clear(); // Reset pour Ã©viter doublons si reconnexion
+            participants.clear(); // Reset pour éviter doublons si reconnexion
             if (data.participants && Array.isArray(data.participants)) {
                 data.participants.forEach(p => {
-                    // Ne pas s'ajouter soi-mÃªme
+                    // Ne pas s'ajouter soi-même
                     if (p.odId !== myOdId) {
                         participants.set(p.odId, { pseudo: p.pseudo, isCreator: p.isCreator || false });
                     }
                 });
                 connectedCount = participants.size;
-                console.log(`ðŸ‘¥ ${connectedCount} participant(s) dÃ©jÃ  dans la room`);
+                console.log(`👥 ${connectedCount} participant(s) déjà dans la room`);
                 
-                // Si on recharge (doubleRatchetState vide), rÃ©init complÃ¨te
+                // Si on recharge (doubleRatchetState vide), réinit complète
                 if (cryptoKey && connectedCount > 0 && doubleRatchetState.size === 0) {
-                    console.log('ðŸ”„ RÃ©initialisation Double Ratchet aprÃ¨s reload...');
+                    console.log('🔄 Réinitialisation Double Ratchet après reload...');
                     (async () => {
                         try {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                             const sharedSecret = new Uint8Array(keyMaterial);
                             
                             for (const [odId, info] of participants.entries()) {
-                                // RÃ©initialiser localement
+                                // Réinitialiser localement
                                 const amInitiator = isCreator || !info.isCreator;
                                 const dhPublicKey = await initializeDoubleRatchet(odId, sharedSecret, amInitiator);
-                                console.log('ðŸ” Double Ratchet rÃ©initialisÃ© pour', odId);
+                                console.log('🔐 Double Ratchet réinitialisé pour', odId);
                                 
-                                // Envoyer la clÃ© publique DH
+                                // Envoyer la clé publique DH
                                 ws.send(JSON.stringify({
                                     type: 'double-ratchet-init',
                                     to: odId,
@@ -1698,45 +1698,45 @@ function handleWebSocketMessage(data) {
                                 }));
                             }
                         } catch (err) {
-                            console.error('âŒ Erreur rÃ©init Double Ratchet:', err);
+                            console.error('❌ Erreur réinit Double Ratchet:', err);
                         }
                     })();
                 } else {
-                    console.log('â­ï¸ Skip rÃ©init Double Ratchet:', { hasCryptoKey: !!cryptoKey, connectedCount, doubleRatchetStateSize: doubleRatchetState.size });
+                    console.log('⏭️ Skip réinit Double Ratchet:', { hasCryptoKey: !!cryptoKey, connectedCount, doubleRatchetStateSize: doubleRatchetState.size });
                 }
             }
-            // Toujours mettre Ã  jour le dropdown (mÃªme si vide)
+            // Toujours mettre à jour le dropdown (même si vide)
             updateConnectedUsersDropdown();
             
-            // VÃ©rifier si un mot de passe est requis
+            // Vérifier si un mot de passe est requis
             if (fileInfo && fileInfo.passwordRequired) {
-                console.log('ðŸ” Mot de passe requis! Salt:', fileInfo.passwordSalt);
+                console.log('🔐 Mot de passe requis! Salt:', fileInfo.passwordSalt);
                 passwordSaltB64 = fileInfo.passwordSalt;
                 passwordIterations = fileInfo.passwordIterations || KDF_ITERATIONS;
                 usePassword = true;
-                elements.receiverStatus.textContent = 'Mot de passe requis pour dÃ©chiffrer';
+                elements.receiverStatus.textContent = 'Mot de passe requis pour déchiffrer';
                 elements.receiverPasswordBlock.classList.remove('hidden');
-                console.log('ðŸ”“ receiverPasswordBlock rendu visible');
+                console.log('🔓 receiverPasswordBlock rendu visible');
                 elements.receiverPasswordApply.onclick = applyReceiverPassword;
             } else if (ecdhKeyPair && ecdhPublicKeyB64) {
-                // Mode ECDH : envoyer ma clÃ© publique au crÃ©ateur pour dÃ©river la clÃ© partagÃ©e
-                console.log('ðŸ” [ECDH] Envoi de ma clÃ© publique au crÃ©ateur...');
-                elements.receiverStatus.textContent = 'Ã‰change de clÃ©s sÃ©curisÃ©...';
+                // Mode ECDH : envoyer ma clé publique au créateur pour dériver la clé partagée
+                console.log('🔐 [ECDH] Envoi de ma clé publique au créateur...');
+                elements.receiverStatus.textContent = 'Échange de clés sécurisé...';
                 
-                // Trouver le crÃ©ateur dans les participants
+                // Trouver le créateur dans les participants
                 const creatorOdId = Array.from(participants.entries())
                     .find(([id, p]) => p.isCreator)?.[0];
                 
                 if (creatorOdId) {
                     sendECDHPublicKey(creatorOdId);
-                    // La dÃ©rivation se fera quand on recevra la clÃ© publique du crÃ©ateur
+                    // La dérivation se fera quand on recevra la clé publique du créateur
                 } else {
-                    console.error('âŒ [ECDH] CrÃ©ateur non trouvÃ© dans les participants');
-                    showError('Erreur: crÃ©ateur de la session introuvable.');
+                    console.error('❌ [ECDH] Créateur non trouvé dans les participants');
+                    showError('Erreur: créateur de la session introuvable.');
                 }
                 saveSessionToStorage();
             } else {
-                console.log('âœ… Pas de mot de passe requis');
+                console.log('✅ Pas de mot de passe requis');
                 elements.receiverStatus.textContent = 'Connexion P2P en cours...';
                 saveSessionToStorage();
                 // Initier les connexions P2P avec tous les participants existants
@@ -1745,54 +1745,54 @@ function handleWebSocketMessage(data) {
             break;
             
         case 'peer-joined':
-            console.log('ðŸ‘‹ [PEER] Nouveau participant dÃ©tectÃ© !');
-            console.log('   ðŸ‘¤ pseudo:', data.pseudo);
-            console.log('   ðŸ”‘ odId:', data.odId);
-            console.log('   ðŸ‘‘ isCreator:', data.isCreator);
+            console.log('👋 [PEER] Nouveau participant détecté !');
+            console.log('   👤 pseudo:', data.pseudo);
+            console.log('   🔑 odId:', data.odId);
+            console.log('   👑 isCreator:', data.isCreator);
             
-            // Ã‰viter les doublons (mÃªme odId dÃ©jÃ  connu)
+            // Éviter les doublons (même odId déjà connu)
             if (participants.has(data.odId)) {
-                console.log(`âš ï¸ [PEER] Participant dÃ©jÃ  connu, ignorÃ©: ${data.pseudo}`);
+                console.log(`⚠️ [PEER] Participant déjà connu, ignoré: ${data.pseudo}`);
                 break;
             }
             
-            console.log(`âœ… [PEER] Ajout du participant: ${data.pseudo}`);
+            console.log(`✅ [PEER] Ajout du participant: ${data.pseudo}`);
             participants.set(data.odId, { pseudo: data.pseudo, isCreator: data.isCreator || false });
             connectedCount = participants.size;
-            console.log('   ðŸ‘¥ Total participants maintenant:', connectedCount);
+            console.log('   👥 Total participants maintenant:', connectedCount);
             
-            // Mettre Ã  jour le statut (selon si on est creator ou receiver)
+            // Mettre à jour le statut (selon si on est creator ou receiver)
             if (!isReceiver && elements.linkStatus) {
-                elements.linkStatus.innerHTML = `<span class="pulse"></span> ðŸ‘¥ ${connectedCount} participant(s) connectÃ©(s)`;
+                elements.linkStatus.innerHTML = `<span class="pulse"></span> 👥 ${connectedCount} participant(s) connecté(s)`;
                 elements.linkStatus.className = 'status status-connected';
             }
             
-            // Mettre Ã  jour le dropdown des utilisateurs connectÃ©s
+            // Mettre à jour le dropdown des utilisateurs connectés
             updateConnectedUsersDropdown();
             
-            // CrÃ©er une connexion P2P avec ce nouveau participant (je suis l'initiateur)
+            // Créer une connexion P2P avec ce nouveau participant (je suis l'initiateur)
             if (!usePassword) {
-                console.log(`ðŸš€ CrÃ©ation connexion P2P avec ${data.pseudo}`);
+                console.log(`🚀 Création connexion P2P avec ${data.pseudo}`);
                 initPeerWith(data.odId, true);
             }
             break;
             
         case 'peer-left':
-            console.log(`ðŸ‘‹ Participant parti: ${data.pseudo} (${data.odId})`);
+            console.log(`👋 Participant parti: ${data.pseudo} (${data.odId})`);
             participants.delete(data.odId);
             connectedCount = participants.size;
             
-            // DÃ©truire le peer correspondant
+            // Détruire le peer correspondant
             const leavingPeer = peers.get(data.odId);
             if (leavingPeer) {
                 leavingPeer.destroy();
                 peers.delete(data.odId);
             }
             
-            // Mettre Ã  jour le statut (selon si on est creator ou receiver)
+            // Mettre à jour le statut (selon si on est creator ou receiver)
             if (!isReceiver && elements.linkStatus) {
                 if (connectedCount > 0) {
-                    elements.linkStatus.innerHTML = `<span class="pulse"></span> ðŸ‘¥ ${connectedCount} participant(s) connectÃ©(s)`;
+                    elements.linkStatus.innerHTML = `<span class="pulse"></span> 👥 ${connectedCount} participant(s) connecté(s)`;
                 } else {
                     elements.linkStatus.innerHTML = '<span class="pulse"></span> En attente de participants...';
                     elements.linkStatus.className = 'status status-waiting';
@@ -1803,22 +1803,22 @@ function handleWebSocketMessage(data) {
             break;
             
         case 'receiver-ready':
-            console.log(`ðŸ”“ Participant prÃªt: ${data.pseudo} (${data.odId})`);
-            elements.linkStatus.innerHTML = '<span class="pulse"></span> Ã‰tablissement P2P...';
-            // CrÃ©er une connexion P2P avec ce participant (je suis l'initiateur)
+            console.log(`🔓 Participant prêt: ${data.pseudo} (${data.odId})`);
+            elements.linkStatus.innerHTML = '<span class="pulse"></span> Établissement P2P...';
+            // Créer une connexion P2P avec ce participant (je suis l'initiateur)
             if (!peers.has(data.odId)) {
                 initPeerWith(data.odId, true);
             }
             break;
             
         case 'signal':
-            // Signal WebRTC d'un participant spÃ©cifique
+            // Signal WebRTC d'un participant spécifique
             const fromId = data.fromId;
             let existingPeer = peers.get(fromId);
             
             if (!existingPeer) {
-                // CrÃ©er le peer s'il n'existe pas (je suis le rÃ©pondeur)
-                console.log(`ðŸ“¡ Signal reÃ§u de ${data.fromPseudo || fromId}, crÃ©ation du peer...`);
+                // Créer le peer s'il n'existe pas (je suis le répondeur)
+                console.log(`📡 Signal reçu de ${data.fromPseudo || fromId}, création du peer...`);
                 initPeerWith(fromId, false);
                 existingPeer = peers.get(fromId);
             }
@@ -1829,8 +1829,8 @@ function handleWebSocketMessage(data) {
             break;
             
         case 'session-closed':
-            // La session a Ã©tÃ© fermÃ©e
-            console.log('ðŸ”´ Session fermÃ©e par:', data.closedBy);
+            // La session a été fermée
+            console.log('🔴 Session fermée par:', data.closedBy);
             clearSessionStorage();
             
             // Fermer les connexions P2P
@@ -1838,10 +1838,10 @@ function handleWebSocketMessage(data) {
             peers.clear();
             
             const closeMessage = data.isCreatorClose 
-                ? `La session a Ã©tÃ© fermÃ©e par le crÃ©ateur (${data.closedBy}).`
-                : `${data.closedBy} a quittÃ© la session.`;
+                ? `La session a été fermée par le créateur (${data.closedBy}).`
+                : `${data.closedBy} a quitté la session.`;
             
-            showError(closeMessage + '\n\nRetour Ã  l\'accueil...');
+            showError(closeMessage + '\n\nRetour à l\'accueil...');
             setTimeout(() => {
                 window.location.href = window.location.origin + window.location.pathname;
             }, 2000);
@@ -1849,23 +1849,23 @@ function handleWebSocketMessage(data) {
         
         case 'approval-pending':
             // Je suis en attente d'approbation
-            console.log('âœ‹ En attente d\'approbation...');
-            showToast('â³ ' + data.message);
+            console.log('✋ En attente d\'approbation...');
+            showToast('⏳ ' + data.message);
             if (elements.receiverStatus) {
-                elements.receiverStatus.textContent = 'â³ ' + data.message;
+                elements.receiverStatus.textContent = '⏳ ' + data.message;
             }
             break;
         
         case 'approval-request':
-            // Un participant demande Ã  rejoindre (je suis le crÃ©ateur)
-            console.log('âœ‹ Demande d\'approbation de:', data.pseudo);
+            // Un participant demande à rejoindre (je suis le créateur)
+            console.log('✋ Demande d\'approbation de:', data.pseudo);
             pendingApprovals.set(data.odId, { pseudo: data.pseudo, timestamp: Date.now() });
             showApprovalRequest(data.odId, data.pseudo);
             break;
         
         case 'approval-rejected':
-            // Ma demande a Ã©tÃ© refusÃ©e
-            console.log('âŒ Demande refusÃ©e');
+            // Ma demande a été refusée
+            console.log('❌ Demande refusée');
             showError(data.message);
             setTimeout(() => {
                 clearSessionStorage();
@@ -1874,39 +1874,39 @@ function handleWebSocketMessage(data) {
             break;
         
         case 'approval-update':
-            // Mise Ã  jour du nombre de demandes en attente
-            console.log('ðŸ“Š Demandes en attente:', data.pendingCount);
+            // Mise à jour du nombre de demandes en attente
+            console.log('📊 Demandes en attente:', data.pendingCount);
             updatePendingBadge(data.pendingCount);
             break;
         
         case 'session-locked':
-            // La session est verrouillÃ©e
-            console.log('ðŸ”’ Session verrouillÃ©e');
+            // La session est verrouillée
+            console.log('🔒 Session verrouillée');
             sessionOptions.isLocked = true;
-            showToast('ðŸ”’ ' + data.message);
+            showToast('🔒 ' + data.message);
             updateLockButton();
             break;
         
         case 'session-unlocked':
-            // La session est dÃ©verrouillÃ©e
-            console.log('ðŸ”“ Session dÃ©verrouillÃ©e');
+            // La session est déverrouillée
+            console.log('🔓 Session déverrouillée');
             sessionOptions.isLocked = false;
-            showToast('ðŸ”“ ' + data.message);
+            showToast('🔓 ' + data.message);
             updateLockButton();
             break;
             
         case 'error':
-            console.log('âŒ Erreur serveur:', data.message);
-            // Si l'erreur indique une session/room expirÃ©e, effacer et revenir Ã  l'accueil
-            const expiredErrors = ['expirÃ©', 'invalide', 'expired', 'invalid', 'not found', 'introuvable'];
+            console.log('❌ Erreur serveur:', data.message);
+            // Si l'erreur indique une session/room expirée, effacer et revenir à l'accueil
+            const expiredErrors = ['expiré', 'invalide', 'expired', 'invalid', 'not found', 'introuvable'];
             const isSessionExpired = expiredErrors.some(e => 
                 data.message && data.message.toLowerCase().includes(e)
             );
             
             if (isSessionExpired) {
-                console.log('ðŸ—‘ï¸ Session expirÃ©e dÃ©tectÃ©e, nettoyage...');
+                console.log('🗑️ Session expirée détectée, nettoyage...');
                 clearSessionStorage();
-                showError(data.message + '\n\nRetour Ã  l\'accueil dans 3 secondes...');
+                showError(data.message + '\n\nRetour à l\'accueil dans 3 secondes...');
                 setTimeout(() => {
                     location.reload();
                 }, 3000);
@@ -1916,73 +1916,73 @@ function handleWebSocketMessage(data) {
             break;
             
         case 'ecdh-public-key':
-            // RÃ©ception de la clÃ© publique ECDH d'un autre participant
-            console.log('ðŸ” [ECDH] ClÃ© publique reÃ§ue de:', data.fromId);
+            // Réception de la clé publique ECDH d'un autre participant
+            console.log('🔐 [ECDH] Clé publique reçue de:', data.fromId);
             handleECDHPublicKey(data.fromId, data.publicKeyB64);
             
-            // Si je suis le crÃ©ateur, dÃ©river la clÃ© pour ce participant
+            // Si je suis le créateur, dériver la clé pour ce participant
             if (isCreator && ecdhKeyPair) {
-                // VÃ©rifier si on a dÃ©jÃ  un Double Ratchet pour ce participant
+                // Vérifier si on a déjà un Double Ratchet pour ce participant
                 const needsInit = !doubleRatchetState.has(data.fromId);
                 
                 if (needsInit) {
                     (async () => {
                         try {
-                            // DÃ©river la clÃ© AES partagÃ©e
+                            // Dériver la clé AES partagée
                             await deriveSharedKey(data.publicKeyB64);
-                            console.log('ðŸ” [ECDH] ClÃ© AES dÃ©rivÃ©e avec succÃ¨s (crÃ©ateur)');
+                            console.log('🔐 [ECDH] Clé AES dérivée avec succès (créateur)');
                             
-                            // Initialiser le Double Ratchet (crÃ©ateur = initiateur)
+                            // Initialiser le Double Ratchet (créateur = initiateur)
                             if (cryptoKey) {
                                 const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                                 const sharedSecret = new Uint8Array(keyMaterial);
                                 const dhPublicKey = await initializeDoubleRatchet(data.fromId, sharedSecret, true);
-                                console.log('ðŸ” Double Ratchet initialisÃ© (crÃ©ateur) pour', data.fromId);
+                                console.log('🔐 Double Ratchet initialisé (créateur) pour', data.fromId);
                                 
                                 // Traiter les double-ratchet-init en attente
                                 if (pendingDoubleRatchetInits.has(data.fromId)) {
                                     const pending = pendingDoubleRatchetInits.get(data.fromId);
                                     await completeDoubleRatchetHandshake(data.fromId, pending.dhPublicKey);
                                     pendingDoubleRatchetInits.delete(data.fromId);
-                                    console.log('âœ… Pending init traitÃ© (crÃ©ateur) pour', data.fromId);
+                                    console.log('✅ Pending init traité (créateur) pour', data.fromId);
                                 }
                                 
-                                // Envoyer la clÃ© publique DH via signaling
+                                // Envoyer la clé publique DH via signaling
                                 ws.send(JSON.stringify({
                                     type: 'double-ratchet-init',
                                     to: data.fromId,
                                     publicKey: Array.from(dhPublicKey)
                                 }));
                             } else {
-                                console.error('âŒ cryptoKey null aprÃ¨s deriveSharedKey (crÃ©ateur)!');
+                                console.error('❌ cryptoKey null après deriveSharedKey (créateur)!');
                             }
                             
-                            // Envoyer ma clÃ© publique en retour
+                            // Envoyer ma clé publique en retour
                             sendECDHPublicKey(data.fromId);
                             
-                            // Sauvegarder la session avec la nouvelle clÃ©
+                            // Sauvegarder la session avec la nouvelle clé
                             saveSessionToStorage();
                         } catch (err) {
-                            console.error('âŒ [ECDH] Erreur dÃ©rivation clÃ©:', err);
-                            showError('Erreur lors de l\'Ã©change de clÃ©s sÃ©curisÃ©.');
+                            console.error('❌ [ECDH] Erreur dérivation clé:', err);
+                            showError('Erreur lors de l\'échange de clés sécurisé.');
                         }
                     })();
                 }
             }
-            // Si je suis receiver et que j'attends une clÃ©
+            // Si je suis receiver et que j'attends une clé
             else if (isReceiver && ecdhKeyPair && !cryptoKey) {
                 (async () => {
                     try {
-                        // DÃ©river la clÃ© AES partagÃ©e
+                        // Dériver la clé AES partagée
                         await deriveSharedKey(data.publicKeyB64);
-                        console.log('ðŸ” [ECDH] ClÃ© AES dÃ©rivÃ©e avec succÃ¨s (receiver)');
+                        console.log('🔐 [ECDH] Clé AES dérivée avec succès (receiver)');
                         
                         // Initialiser le Double Ratchet (receiver = non-initiateur)
                         if (cryptoKey) {
                             const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                             const sharedSecret = new Uint8Array(keyMaterial);
                             const dhPublicKey = await initializeDoubleRatchet(data.fromId, sharedSecret, false);
-                            console.log('ðŸ” Double Ratchet initialisÃ© (receiver) pour', data.fromId);
+                            console.log('🔐 Double Ratchet initialisé (receiver) pour', data.fromId);
                             
                             // Traiter les double-ratchet-init en attente
                             if (pendingDoubleRatchetInits.has(data.fromId)) {
@@ -1991,32 +1991,32 @@ function handleWebSocketMessage(data) {
                                 pendingDoubleRatchetInits.delete(data.fromId);
                             }
                             
-                            // Envoyer la clÃ© publique DH via signaling
+                            // Envoyer la clé publique DH via signaling
                             ws.send(JSON.stringify({
                                 type: 'double-ratchet-init',
                                 to: data.fromId,
                                 publicKey: Array.from(dhPublicKey)
                             }));
                         } else {
-                            console.error('âŒ cryptoKey null aprÃ¨s deriveSharedKey!');
+                            console.error('❌ cryptoKey null après deriveSharedKey!');
                         }
                         
                         // Sauvegarder la session
                         saveSessionToStorage();
                         
                         // Maintenant on peut initier les connexions P2P
-                        elements.receiverStatus.textContent = 'ClÃ© sÃ©curisÃ©e Ã©tablie, connexion P2P...';
+                        elements.receiverStatus.textContent = 'Clé sécurisée établie, connexion P2P...';
                         initPeersWithExistingParticipants();
                     } catch (err) {
-                        console.error('âŒ [ECDH] Erreur dÃ©rivation clÃ©:', err);
-                        showError('Erreur lors de l\'Ã©change de clÃ©s sÃ©curisÃ©.');
+                        console.error('❌ [ECDH] Erreur dérivation clé:', err);
+                        showError('Erreur lors de l\'échange de clés sécurisé.');
                     }
                 })();
             }
             break;
         
         case 'double-ratchet-init':
-            // RÃ©ception de la clÃ© publique DH pour complÃ©ter le handshake
+            // Réception de la clé publique DH pour compléter le handshake
             handleDoubleRatchetInit(data, data.fromOdId);
             break;
     }
@@ -2026,27 +2026,27 @@ function handleWebSocketMessage(data) {
 
 // Initialiser les connexions P2P avec tous les participants existants (quand on rejoint une room)
 function initPeersWithExistingParticipants() {
-    console.log('ðŸ”— initPeersWithExistingParticipants: participants.size =', participants.size);
+    console.log('🔗 initPeersWithExistingParticipants: participants.size =', participants.size);
     
-    // Toujours envoyer receiver-ready pour signaler qu'on est prÃªt
-    // Le crÃ©ateur recevra ce signal et initiera la connexion P2P
+    // Toujours envoyer receiver-ready pour signaler qu'on est prêt
+    // Le créateur recevra ce signal et initiera la connexion P2P
     if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log('ðŸ“¤ Envoi de receiver-ready');
+        console.log('📤 Envoi de receiver-ready');
         ws.send(JSON.stringify({ type: 'receiver-ready' }));
     }
     
-    // Si on a dÃ©jÃ  des participants, crÃ©er les connexions P2P avec eux
+    // Si on a déjà des participants, créer les connexions P2P avec eux
     participants.forEach((info, odId) => {
         if (!peers.has(odId)) {
-            console.log(`ðŸš€ Connexion P2P avec ${info.pseudo} (${odId})`);
+            console.log(`🚀 Connexion P2P avec ${info.pseudo} (${odId})`);
         }
     });
 }
 
-// CrÃ©er une connexion P2P avec un participant spÃ©cifique
+// Créer une connexion P2P avec un participant spécifique
 function initPeerWith(targetOdId, initiator) {
     if (peers.has(targetOdId)) {
-        console.log(`âš ï¸ Peer dÃ©jÃ  existant pour ${targetOdId}`);
+        console.log(`⚠️ Peer déjà existant pour ${targetOdId}`);
         return;
     }
     
@@ -2061,7 +2061,7 @@ function initPeerWith(targetOdId, initiator) {
     peers.set(targetOdId, newPeer);
     
     newPeer.on('signal', (signal) => {
-        // Envoyer le signal SDP/ICE via WebSocket vers ce participant spÃ©cifique
+        // Envoyer le signal SDP/ICE via WebSocket vers ce participant spécifique
         ws.send(JSON.stringify({
             type: 'signal',
             signal: signal,
@@ -2070,9 +2070,9 @@ function initPeerWith(targetOdId, initiator) {
     });
     
     newPeer.on('connect', () => {
-        console.log(`ðŸ¤ Connexion P2P Ã©tablie avec ${targetOdId} !`);
+        console.log(`🤝 Connexion P2P établie avec ${targetOdId} !`);
         
-        // Mettre Ã  jour le statut du chat
+        // Mettre à jour le statut du chat
         updateChatStatus(true);
         
         // Afficher le chat si le mode l'inclut
@@ -2094,20 +2094,20 @@ function initPeerWith(targetOdId, initiator) {
         }
         
         if (isCreator) {
-            // CÃ´tÃ© crÃ©ateur : dÃ©marrer le flux d'auth puis transfert (si mode fichier uniquement)
+            // Côté créateur : démarrer le flux d'auth puis transfert (si mode fichier uniquement)
             if (sessionMode === 'file' && peers.size === 1) {
                 startTransferFlow();
             }
-            // En mode both, pas de transfert automatique - les fichiers sont envoyÃ©s via la zone latÃ©rale
+            // En mode both, pas de transfert automatique - les fichiers sont envoyés via la zone latérale
         } else {
             if (sessionMode === 'chat') {
-                elements.receiverStatus.textContent = 'ConnectÃ© ! Vous pouvez discuter.';
+                elements.receiverStatus.textContent = 'Connecté ! Vous pouvez discuter.';
                 document.querySelector('.receiver-info').style.display = 'none';
             } else if (sessionMode === 'both') {
-                elements.receiverStatus.textContent = 'ConnectÃ© ! Vous pouvez discuter et Ã©changer des fichiers.';
+                elements.receiverStatus.textContent = 'Connecté ! Vous pouvez discuter et échanger des fichiers.';
                 document.querySelector('.receiver-info').style.display = 'none';
             } else {
-                elements.receiverStatus.textContent = 'Connexion Ã©tablie ! Transfert en cours...';
+                elements.receiverStatus.textContent = 'Connexion établie ! Transfert en cours...';
             }
         }
     });
@@ -2117,28 +2117,28 @@ function initPeerWith(targetOdId, initiator) {
     });
     
     newPeer.on('close', () => {
-        console.log(`ðŸ”Œ Connexion P2P fermÃ©e avec ${targetOdId}`);
+        console.log(`🔌 Connexion P2P fermée avec ${targetOdId}`);
         peers.delete(targetOdId);
     });
     
     newPeer.on('error', (err) => {
         // Ignorer les erreurs d'annulation volontaire
         if (err.message && (err.message.includes('User-Initiated Abort') || err.message.includes('Close called'))) {
-            console.log(`â„¹ï¸ Connexion P2P fermÃ©e proprement avec ${targetOdId}`);
+            console.log(`ℹ️ Connexion P2P fermée proprement avec ${targetOdId}`);
             return;
         }
         
-        // Si le peer est dÃ©jÃ  connectÃ©, ne pas afficher d'erreur
+        // Si le peer est déjà connecté, ne pas afficher d'erreur
         if (newPeer && newPeer.connected) {
-            console.log(`â„¹ï¸ Erreur P2P ignorÃ©e (peer ${targetOdId} dÃ©jÃ  connectÃ©):`, err.message);
+            console.log(`ℹ️ Erreur P2P ignorée (peer ${targetOdId} déjà connecté):`, err.message);
             return;
         }
         
-        console.error(`âŒ Erreur P2P avec ${targetOdId}:`, err);
+        console.error(`❌ Erreur P2P avec ${targetOdId}:`, err);
     });
 }
 
-// Fonction legacy pour compatibilitÃ© (utilisÃ©e dans quelques endroits)
+// Fonction legacy pour compatibilité (utilisée dans quelques endroits)
 function initPeer(initiator) {
     // Si on a des participants, se connecter au premier
     if (participants.size > 0) {
@@ -2147,7 +2147,7 @@ function initPeer(initiator) {
     }
 }
 
-// Obtenir un peer connectÃ© (pour envoyer des messages)
+// Obtenir un peer connecté (pour envoyer des messages)
 function getConnectedPeer() {
     for (const [odId, p] of peers) {
         if (p.connected) return p;
@@ -2155,26 +2155,26 @@ function getConnectedPeer() {
     return null;
 }
 
-// Envoyer des donnÃ©es Ã  tous les peers connectÃ©s
+// Envoyer des données à tous les peers connectés
 async function broadcastToAllPeers(data) {
     const dataStr = typeof data === 'string' ? data : JSON.stringify(data);
     
     for (const [odId, p] of peers.entries()) {
         if (p.connected) {
             try {
-                // Si Double Ratchet est initialisÃ© pour ce peer, chiffrer
+                // Si Double Ratchet est initialisé pour ce peer, chiffrer
                 if (doubleRatchetState.has(odId)) {
                     const plaintext = new TextEncoder().encode(dataStr);
                     const encrypted = await sendMessageWithDoubleRatchet(odId, plaintext);
                     p.send(JSON.stringify(encrypted));
-                    // Message chiffrÃ©
+                    // Message chiffré
                 } else {
-                    // Fallback: envoi en clair (pour compatibilitÃ© temporaire)
+                    // Fallback: envoi en clair (pour compatibilité temporaire)
                     p.send(dataStr);
-                    console.warn('âš ï¸ Envoi non chiffrÃ© vers', odId, '(Double Ratchet non initialisÃ©)');
+                    console.warn('⚠️ Envoi non chiffré vers', odId, '(Double Ratchet non initialisé)');
                 }
             } catch (err) {
-                console.error(`âŒ Erreur envoi vers ${odId}:`, err);
+                console.error(`❌ Erreur envoi vers ${odId}:`, err);
             }
         }
     }
@@ -2214,25 +2214,25 @@ async function sendAuthChallenge() {
 }
 
 async function handleAuthChallenge(data, fromOdId) {
-    // CÃ´tÃ© destinataire
+    // Côté destinataire
     const peer = fromOdId ? peers.get(fromOdId) : getConnectedPeer();
-    console.log('ðŸ”‘ handleAuthChallenge appelÃ©, cryptoKey existe?', !!cryptoKey, 'peer existe?', !!peer);
+    console.log('🔑 handleAuthChallenge appelé, cryptoKey existe?', !!cryptoKey, 'peer existe?', !!peer);
     
     if (!cryptoKey) {
         // Pas encore de mot de passe saisi : on met en attente
-        console.log('â³ Pas de clÃ©, mise en attente');
+        console.log('⏳ Pas de clé, mise en attente');
         pendingChallenge = data;
         return;
     }
 
     if (!peer) {
-        console.error('âŒ ERREUR: peer inexistant dans handleAuthChallenge!');
+        console.error('❌ ERREUR: peer inexistant dans handleAuthChallenge!');
         pendingChallenge = data;
         return;
     }
 
     try {
-        console.log('ðŸ”“ DÃ©chiffrement du challenge...');
+        console.log('🔓 Déchiffrement du challenge...');
         const iv = fromBase64(data.iv);
         const cipher = fromBase64(data.cipher);
         const plainBuf = await window.crypto.subtle.decrypt(
@@ -2242,7 +2242,7 @@ async function handleAuthChallenge(data, fromOdId) {
         );
 
         const plainB64 = toBase64(new Uint8Array(plainBuf));
-        console.log('âœ… Challenge dÃ©chiffrÃ© avec succÃ¨s, envoi de auth-response ok');
+        console.log('✅ Challenge déchiffré avec succès, envoi de auth-response ok');
         peer.send(JSON.stringify({
             type: 'auth-response',
             ok: true,
@@ -2250,27 +2250,27 @@ async function handleAuthChallenge(data, fromOdId) {
         }));
 
         authVerified = true;
-        elements.receiverStatus.textContent = 'Mot de passe validÃ©. Connexion sÃ©curisÃ©e.';
+        elements.receiverStatus.textContent = 'Mot de passe validé. Connexion sécurisée.';
         
-        // Initialiser Double Ratchet cÃ´tÃ© destinataire (non-initiator)
+        // Initialiser Double Ratchet côté destinataire (non-initiator)
         if (fromOdId && cryptoKey) {
             try {
                 const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
                 const sharedSecret = new Uint8Array(keyMaterial);
                 const dhPublicKey = await initializeDoubleRatchet(fromOdId, sharedSecret, false);
                 
-                // Envoyer notre clÃ© DH publique
+                // Envoyer notre clé DH publique
                 peer.send(JSON.stringify({
                     type: 'double-ratchet-init',
                     dhPublicKey: dhPublicKey
                 }));
-                console.log('ðŸ” Double Ratchet initialisÃ© cÃ´tÃ© destinataire pour', fromOdId);
+                console.log('🔐 Double Ratchet initialisé côté destinataire pour', fromOdId);
             } catch (err) {
-                console.error('âŒ Erreur init Double Ratchet destinataire:', err);
+                console.error('❌ Erreur init Double Ratchet destinataire:', err);
             }
         }
     } catch (err) {
-        console.error('âŒ ERREUR dÃ©chiffrement - mot de passe incorrect ou donnÃ©es corrompu', err);
+        console.error('❌ ERREUR déchiffrement - mot de passe incorrect ou données corrompu', err);
         if (peer) peer.send(JSON.stringify({ type: 'auth-response', ok: false, reason: 'bad-password' }));
         showError('Mot de passe incorrect.');
         peers.forEach(p => p.destroy());
@@ -2279,28 +2279,28 @@ async function handleAuthChallenge(data, fromOdId) {
 }
 
 async function handleAuthResponse(data) {
-    // CÃ´tÃ© expÃ©diteur
-    console.log('ðŸ” handleAuthResponse reÃ§ue:', data);
+    // Côté expéditeur
+    console.log('🔏 handleAuthResponse reçue:', data);
     
     if (!usePassword) {
-        console.log('âœ… Pas de mot de passe, ignorant auth-response');
+        console.log('✅ Pas de mot de passe, ignorant auth-response');
         return;
     }
 
     if (!data.ok) {
-        console.error('âŒ Mot de passe incorrect cÃ´tÃ© destinataire');
-        showError('Mot de passe incorrect cÃ´tÃ© destinataire.');
-        // DÃ©truire tous les peers
+        console.error('❌ Mot de passe incorrect côté destinataire');
+        showError('Mot de passe incorrect côté destinataire.');
+        // Détruire tous les peers
         peers.forEach(p => p.destroy());
         peers.clear();
         return;
     }
 
     if (expectedChallengeB64 && data.value === expectedChallengeB64) {
-        console.log('âœ… Mot de passe vÃ©rifiÃ©! DÃ©marrage du transfert...');
+        console.log('✅ Mot de passe vérifié! Démarrage du transfert...');
         authVerified = true;
         
-        // Initialiser Double Ratchet cÃ´tÃ© expÃ©diteur (initiator)
+        // Initialiser Double Ratchet côté expéditeur (initiator)
         const peer = getConnectedPeer();
         if (peer && peer._id && cryptoKey) {
             try {
@@ -2308,21 +2308,21 @@ async function handleAuthResponse(data) {
                 const sharedSecret = new Uint8Array(keyMaterial);
                 const dhPublicKey = await initializeDoubleRatchet(peer._id, sharedSecret, true);
                 
-                // Envoyer notre clÃ© DH publique
+                // Envoyer notre clé DH publique
                 peer.send(JSON.stringify({
                     type: 'double-ratchet-init',
                     dhPublicKey: dhPublicKey
                 }));
-                console.log('ðŸ” Double Ratchet initialisÃ© cÃ´tÃ© expÃ©diteur pour', peer._id);
+                console.log('🔐 Double Ratchet initialisé côté expéditeur pour', peer._id);
             } catch (err) {
-                console.error('âŒ Erreur init Double Ratchet expÃ©diteur:', err);
+                console.error('❌ Erreur init Double Ratchet expéditeur:', err);
             }
         }
         
         startFileTransfer();
     } else {
-        console.error('âŒ Challenge response invalide');
-        showError('VÃ©rification dÃ©cryptÃ©e Ã©chouÃ©e.');
+        console.error('❌ Challenge response invalide');
+        showError('Vérification décryptée échouée.');
         peers.forEach(p => p.destroy());
         peers.clear();
     }
@@ -2339,7 +2339,7 @@ async function handleDoubleRatchetInit(data, fromOdId) {
         return;
     }
     
-    // Si le Double Ratchet n'est pas encore initialisÃ©, bufferiser aussi
+    // Si le Double Ratchet n'est pas encore initialisé, bufferiser aussi
     if (!doubleRatchetState.has(fromOdId)) {
         pendingDoubleRatchetInits.set(fromOdId, { dhPublicKey: data.dhPublicKey });
         return;
@@ -2347,36 +2347,36 @@ async function handleDoubleRatchetInit(data, fromOdId) {
     
     const state = doubleRatchetState.get(fromOdId);
     
-    // Si on n'a pas encore leur clÃ© publique, c'est la rÃ©ponse Ã  notre init
+    // Si on n'a pas encore leur clé publique, c'est la réponse à notre init
     if (!state.dhRatchet.theirPublicKeyB64) {
         try {
             await completeDoubleRatchetHandshake(fromOdId, data.dhPublicKey);
         } catch (err) {
-            console.error('âŒ Handshake Double Ratchet:', err.message);
+            console.error('❌ Handshake Double Ratchet:', err.message);
         }
         return;
     }
     
-    // Sinon c'est un reload de l'autre cÃ´tÃ© â†’ rÃ©initialiser complÃ¨tement
+    // Sinon c'est un reload de l'autre côté → réinitialiser complètement
     try {
-        // Anti-boucle: ne pas renvoyer si on a dÃ©jÃ  rÃ©pondu rÃ©cemment (< 5s)
+        // Anti-boucle: ne pas renvoyer si on a déjà répondu récemment (< 5s)
         const lastSent = lastDoubleRatchetInitSent.get(fromOdId) || 0;
         const now = Date.now();
         const shouldReply = (now - lastSent) > 5000;
         
-        // Reset complet de notre Ã©tat
+        // Reset complet de notre état
         doubleRatchetState.delete(fromOdId);
         
-        // RÃ©initialiser avec nouvelle clÃ©
+        // Réinitialiser avec nouvelle clé
         const keyMaterial = await window.crypto.subtle.exportKey('raw', cryptoKey);
         const sharedSecret = new Uint8Array(keyMaterial);
         const amInitiator = isCreator;
         const dhPublicKey = await initializeDoubleRatchet(fromOdId, sharedSecret, amInitiator);
         
-        // ComplÃ©ter avec leur clÃ©
+        // Compléter avec leur clé
         await completeDoubleRatchetHandshake(fromOdId, data.dhPublicKey);
         
-        // Renvoyer notre nouvelle clÃ© UNE SEULE FOIS
+        // Renvoyer notre nouvelle clé UNE SEULE FOIS
         if (shouldReply) {
             ws.send(JSON.stringify({
                 type: 'double-ratchet-init',
@@ -2387,18 +2387,18 @@ async function handleDoubleRatchetInit(data, fromOdId) {
         }
         
     } catch (err) {
-        console.error('âŒ Handshake Double Ratchet:', err.message);
+        console.error('❌ Handshake Double Ratchet:', err.message);
     }
 }
 
 async function handleDoubleRatchetMessage(encrypted, fromOdId) {
     if (!fromOdId || !encrypted.data || !encrypted.dhPublicKey) {
-        console.error('âŒ Message Double Ratchet invalide');
+        console.error('❌ Message Double Ratchet invalide');
         return;
     }
     
     try {
-        // DÃ©chiffrer le message
+        // Déchiffrer le message
         const decrypted = await receiveMessageWithDoubleRatchet(
             fromOdId,
             encrypted.data,
@@ -2409,7 +2409,7 @@ async function handleDoubleRatchetMessage(encrypted, fromOdId) {
         const decryptedText = new TextDecoder().decode(decrypted);
         const originalData = JSON.parse(decryptedText);
         
-        // Message dÃ©chiffrÃ©
+        // Message déchiffré
         
         // Dispatcher vers le bon handler selon le type
         switch (originalData.type) {
@@ -2429,10 +2429,10 @@ async function handleDoubleRatchetMessage(encrypted, fromOdId) {
                 handleTypingSignal(originalData, fromOdId);
                 break;
             default:
-                console.warn('âš ï¸ Type de message dÃ©chiffrÃ© non gÃ©rÃ©:', originalData.type);
+                console.warn('⚠️ Type de message déchiffré non géré:', originalData.type);
         }
     } catch (err) {
-        console.error('âŒ Erreur dÃ©chiffrement Double Ratchet:', err);
+        console.error('❌ Erreur déchiffrement Double Ratchet:', err);
     }
 }
 
@@ -2440,10 +2440,10 @@ async function startFileTransfer() {
     if (usePassword && !authVerified) return;
     const peer = getConnectedPeer();
     if (!peer) {
-        showError('Aucun peer connectÃ© pour le transfert.');
+        showError('Aucun peer connecté pour le transfert.');
         return;
     }
-    console.log('ðŸ“¤ DÃ©marrage du transfert...');
+    console.log('📤 Démarrage du transfert...');
     
     elements.senderSection.classList.add('hidden');
     elements.linkSection.classList.add('hidden');
@@ -2452,7 +2452,7 @@ async function startFileTransfer() {
     
     transferStartTime = Date.now();
     
-    // Envoyer les mÃ©tadonnÃ©es du fichier
+    // Envoyer les métadonnées du fichier
     const metadata = {
         type: 'metadata',
         name: getSelectedFileName(),
@@ -2478,7 +2478,7 @@ async function startFileTransfer() {
         // Chiffrer le chunk
         const encryptedChunk = await encryptChunk(chunkData);
         
-        // CrÃ©er le paquet avec mÃ©tadonnÃ©es
+        // Créer le paquet avec métadonnées
         const packet = {
             type: 'chunk',
             index: chunkIndex,
@@ -2499,21 +2499,21 @@ async function startFileTransfer() {
         updateProgress(sentBytes, selectedFile.size);
     }
     
-    // Envoyer le hash final pour vÃ©rification
+    // Envoyer le hash final pour vérification
     const finalPacket = {
         type: 'complete',
         hash: senderFileHash
     };
     peer.send(JSON.stringify(finalPacket));
     
-    console.log('âœ… Tous les chunks envoyÃ©s');
+    console.log('✅ Tous les chunks envoyés');
 }
 
 function handlePeerData(rawData, fromOdId) {
     try {
         const data = JSON.parse(rawData.toString());
         
-        // DÃ©tecter et dÃ©chiffrer les messages Double Ratchet
+        // Détecter et déchiffrer les messages Double Ratchet
         if (data.type === 'double-ratchet-message') {
             handleDoubleRatchetMessage(data, fromOdId);
             return;
@@ -2569,7 +2569,7 @@ function handlePeerData(rawData, fromOdId) {
                 break;
 
             case 'metadata':
-                // RÃ©ception des mÃ©tadonnÃ©es du fichier
+                // Réception des métadonnées du fichier
                 fileInfo = {
                     name: data.name,
                     size: data.size,
@@ -2577,7 +2577,7 @@ function handlePeerData(rawData, fromOdId) {
                 };
                 elements.receiverSection.classList.add('hidden');
                 elements.progressSection.classList.remove('hidden');
-                elements.progressTitle.textContent = 'RÃ©ception en cours...';
+                elements.progressTitle.textContent = 'Réception en cours...';
                 transferStartTime = Date.now();
                 break;
                 
@@ -2604,13 +2604,13 @@ async function receiveChunk(data) {
         
         updateProgress(totalReceived, fileInfo.size);
     } catch (err) {
-        console.error('Erreur dÃ©chiffrement chunk:', err);
-        showError('Erreur de dÃ©chiffrement. ClÃ© invalide ?');
+        console.error('Erreur déchiffrement chunk:', err);
+        showError('Erreur de déchiffrement. Clé invalide ?');
     }
 }
 
 async function finalizeTransfer(expectedHash) {
-    console.log('ðŸ”§ Reconstruction du fichier...');
+    console.log('🔧 Reconstruction du fichier...');
     
     // Fusionner tous les chunks
     const totalLength = receivedChunks.reduce((acc, chunk) => acc + chunk.length, 0);
@@ -2622,18 +2622,18 @@ async function finalizeTransfer(expectedHash) {
         offset += chunk.length;
     }
     
-    // VÃ©rifier l'intÃ©gritÃ©
+    // Vérifier l'intégrité
     const calculatedHash = await calculateHash(fileData);
     const integrityOk = calculatedHash === expectedHash;
     
     if (!integrityOk) {
-        console.warn('âš ï¸ Hash diffÃ©rent - fichier potentiellement corrompu');
-        elements.integrityCheck.innerHTML = '<span class="integrity-icon">âš ï¸</span><span>Attention : intÃ©gritÃ© non vÃ©rifiÃ©e</span>';
+        console.warn('⚠️ Hash différent - fichier potentiellement corrompu');
+        elements.integrityCheck.innerHTML = '<span class="integrity-icon">⚠️</span><span>Attention : intégrité non vérifiée</span>';
         elements.integrityCheck.style.background = 'rgba(245, 158, 11, 0.1)';
         elements.integrityCheck.style.color = 'var(--warning)';
     }
     
-    // CrÃ©er le Blob et dÃ©clencher le tÃ©lÃ©chargement
+    // Créer le Blob et déclencher le téléchargement
     const blob = new Blob([fileData], { type: fileInfo.mimeType || 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     
@@ -2644,23 +2644,23 @@ async function finalizeTransfer(expectedHash) {
     
     URL.revokeObjectURL(url);
     
-    // Afficher la section terminÃ©e
+    // Afficher la section terminée
     hideAllSections();
     elements.completeSection.classList.remove('hidden');
-    elements.completeMessage.textContent = `${fileInfo.name} (${formatFileSize(fileInfo.size)}) tÃ©lÃ©chargÃ© avec succÃ¨s !`;
+    elements.completeMessage.textContent = `${fileInfo.name} (${formatFileSize(fileInfo.size)}) téléchargé avec succès !`;
     
     // Nettoyer
     receivedChunks = [];
     totalReceived = 0;
     
-    // DÃ©truire tous les peers
+    // Détruire tous les peers
     peers.forEach(p => p.destroy());
     peers.clear();
     
-    // Effacer la session sauvegardÃ©e (transfert terminÃ©)
+    // Effacer la session sauvegardée (transfert terminé)
     clearSessionStorage();
     
-    console.log('âœ… Transfert terminÃ© !');
+    console.log('✅ Transfert terminé !');
 }
 
 function updateProgress(current, total) {
@@ -2678,50 +2678,41 @@ function updateProgress(current, total) {
         }
     }
     
-    // Transfert terminÃ© cÃ´tÃ© expÃ©diteur
+    // Transfert terminé côté expéditeur
     if (percent >= 100 && !isReceiver) {
         setTimeout(() => {
             hideAllSections();
             elements.completeSection.classList.remove('hidden');
-            elements.completeMessage.textContent = `${getSelectedFileName()} envoyÃ© avec succÃ¨s !`;
+            elements.completeMessage.textContent = `${getSelectedFileName()} envoyé avec succès !`;
         }, 500);
     }
 }
 
-// ===== GÃ‰NÃ‰RATION DU LIEN =====
+// ===== GÉNÉRATION DU LIEN =====
 
 async function generateShareLink() {
     let link;
     const mode = sessionMode || 'file';
-    let hashPart;
     
     if (usePassword) {
         // Lien avec mot de passe : roomId_mode_pwd_salt_iterations
-        hashPart = `${roomId}_${mode}_pwd_${passwordSaltB64}_${passwordIterations}`;
-        link = `${window.location.origin}${window.location.pathname}#${hashPart}`;
+        link = `${window.location.origin}${window.location.pathname}#${roomId}_${mode}_pwd_${passwordSaltB64}_${passwordIterations}`;
     } else {
-        // Lien ECDH (sans clÃ© dans l'URL) : roomId_mode_ecdh
-        hashPart = `${roomId}_${mode}_ecdh`;
-        link = `${window.location.origin}${window.location.pathname}#${hashPart}`;
-    }
-    
-    // Uniformiser: le crÃ©ateur bascule aussi sur l'URL avec hash
-    if (window.location.hash !== `#${hashPart}`) {
-        window.location.hash = hashPart;
-        console.log('ðŸ”— CrÃ©ateur redirigÃ© vers:', hashPart);
+        // Lien ECDH (sans clé dans l'URL) : roomId_mode_ecdh
+        link = `${window.location.origin}${window.location.pathname}#${roomId}_${mode}_ecdh`;
     }
     
     elements.shareLink.value = link;
     elements.linkSection.classList.remove('hidden');
     
-    // Afficher le badge "Session Ã©phÃ©mÃ¨re" dans le header
+    // Afficher le badge "Session éphémère" dans le header
     showEphemeralBadge();
     
-    // GÃ©nÃ©ration du QR Code
+    // Génération du QR Code
     const qrcodeContainer = document.getElementById('qrcode-container');
     const qrcodeDiv = document.getElementById('qrcode');
     if (qrcodeContainer && qrcodeDiv && window.QRCode) {
-        qrcodeDiv.innerHTML = ''; // Effacer le prÃ©cÃ©dent
+        qrcodeDiv.innerHTML = ''; // Effacer le précédent
         new QRCode(qrcodeDiv, {
             text: link,
             width: 160,
@@ -2733,24 +2724,24 @@ async function generateShareLink() {
         qrcodeContainer.classList.remove('hidden');
     }
     
-    console.log('ðŸ”— Lien de partage gÃ©nÃ©rÃ© (mode:', mode, ', ECDH)');
+    console.log('🔗 Lien de partage généré (mode:', mode, ', ECDH)');
 }
 
 // ===== GESTION DES FICHIERS =====
 
-// Multi-fichiers: crÃ©e automatiquement une archive ZIP cÃ´tÃ© navigateur
+// Multi-fichiers: crée automatiquement une archive ZIP côté navigateur
 async function handleMultiFileSelect(files) {
     if (!files || files.length === 0) return;
     try {
-        console.log('ðŸ“ SÃ©lection multiple:', files.map(f => f.name));
-        // Indication UI le temps de la prÃ©paration
+        console.log('📁 Sélection multiple:', files.map(f => f.name));
+        // Indication UI le temps de la préparation
         elements.fileInfoDiv.classList.remove('hidden');
         elements.dropZone.classList.add('hidden');
         elements.passwordBlock.classList.remove('hidden');
-        elements.fileName.textContent = 'PrÃ©paration de l\'archive...';
+        elements.fileName.textContent = 'Préparation de l\'archive...';
         elements.fileSize.textContent = '';
 
-        // CrÃ©er le zip
+        // Créer le zip
         if (!window.JSZip) {
             throw new Error('JSZip indisponible');
         }
@@ -2773,14 +2764,14 @@ async function handleMultiFileSelect(files) {
         elements.fileName.textContent = `${archiveName} (${files.length} fichiers)`;
         elements.fileSize.textContent = formatFileSize(selectedFile.size);
 
-        // RÃ©initialiser l'Ã©tat d'auth
+        // Réinitialiser l'état d'auth
         usePassword = false;
         passwordSaltB64 = null;
         authVerified = false;
         pendingChallenge = null;
         expectedChallengeB64 = null;
         
-        // MÃ©moriser la liste pour le destinataire
+        // Mémoriser la liste pour le destinataire
         fileInfo = {
             name: archiveName,
             size: selectedFile.size,
@@ -2790,8 +2781,8 @@ async function handleMultiFileSelect(files) {
             files: files.map(f => ({ name: f.name, size: f.size }))
         };
     } catch (err) {
-        console.error('âŒ Erreur multi-fichiers:', err);
-        showError('Erreur lors de la prÃ©paration de l\'archive: ' + err.message);
+        console.error('❌ Erreur multi-fichiers:', err);
+        showError('Erreur lors de la préparation de l\'archive: ' + err.message);
         elements.fileInput.value = '';
     }
 }
@@ -2808,7 +2799,7 @@ async function handleFileSelect(file) {
     if (!file) return;
     
     try {
-        console.log('ðŸ“ Fichier sÃ©lectionnÃ©:', file.name);
+        console.log('📁 Fichier sélectionné:', file.name);
         
         selectedFile = file;
         
@@ -2819,44 +2810,44 @@ async function handleFileSelect(file) {
         elements.dropZone.classList.add('hidden');
         elements.passwordBlock.classList.remove('hidden');
         
-        // RÃ©initialiser l'Ã©tat d'auth
+        // Réinitialiser l'état d'auth
         usePassword = false;
         passwordSaltB64 = null;
         authVerified = false;
         pendingChallenge = null;
         expectedChallengeB64 = null;
     } catch (err) {
-        console.error('âŒ Erreur dans handleFileSelect:', err);
-        showError('Erreur lors de la sÃ©lection du fichier: ' + err.message);
+        console.error('❌ Erreur dans handleFileSelect:', err);
+        showError('Erreur lors de la sélection du fichier: ' + err.message);
         elements.fileInput.value = '';
     }
 }
 
-// Lance rÃ©ellement l'envoi : dÃ©rive la clÃ©, construit fileInfo, crÃ©e la room
+// Lance réellement l'envoi : dérive la clé, construit fileInfo, crée la room
 async function startSend() {
     // En mode chat uniquement ou mode both, pas besoin de fichier
     if (sessionMode === 'file' && !selectedFile) {
-        showToast('SÃ©lectionnez un fichier d\'abord');
+        showToast('Sélectionnez un fichier d\'abord');
         return;
     }
     try {
-        // Choisir la stratÃ©gie de clÃ© : mot de passe ou ECDH (Ã©change de clÃ©s)
+        // Choisir la stratégie de clé : mot de passe ou ECDH (échange de clés)
         const passwordValue = elements.passwordInput.value.trim();
         usePassword = passwordValue.length > 0;
         passwordSaltB64 = usePassword ? generatePasswordSalt() : null;
         passwordIterations = KDF_ITERATIONS;
 
         if (usePassword) {
-            console.log('ðŸ” Mot de passe dÃ©tectÃ©, dÃ©rivation en cours...');
+            console.log('🔐 Mot de passe détecté, dérivation en cours...');
             cryptoKey = await deriveKeyFromPassword(passwordValue, passwordSaltB64, passwordIterations);
         } else {
-            // Mode ECDH : gÃ©nÃ©rer une paire de clÃ©s, la clÃ© AES sera dÃ©rivÃ©e aprÃ¨s Ã©change
-            console.log('ðŸ”‘ GÃ©nÃ©ration paire ECDH (Diffie-Hellman)...');
+            // Mode ECDH : générer une paire de clés, la clé AES sera dérivée après échange
+            console.log('🔑 Génération paire ECDH (Diffie-Hellman)...');
             await generateECDHKeyPair();
-            // cryptoKey sera null jusqu'Ã  ce qu'un receiver rejoigne et qu'on dÃ©rive la clÃ© partagÃ©e
+            // cryptoKey sera null jusqu'à ce qu'un receiver rejoigne et qu'on dérive la clé partagée
         }
 
-        // Pour le mode chat uniquement ou both, pas besoin de fileInfo de fichier rÃ©el
+        // Pour le mode chat uniquement ou both, pas besoin de fileInfo de fichier réel
         if (sessionMode === 'chat' || sessionMode === 'both') {
             fileInfo = {
                 name: sessionMode === 'chat' ? 'Chat Session' : 'Chat + Files Session',
@@ -2871,14 +2862,14 @@ async function startSend() {
                 fileInfo.passwordIterations = passwordIterations;
             }
         } else if (selectedFile) {
-            // Mode fichier : PrÃ©parer les infos du fichier AVEC paramÃ¨tres de mot de passe si applicable
+            // Mode fichier : Préparer les infos du fichier AVEC paramètres de mot de passe si applicable
             const baseInfo = {
                 name: getSelectedFileName(),
                 size: selectedFile.size,
                 type: getSelectedFileType('application/octet-stream'),
                 passwordRequired: usePassword
             };
-            // Conserver les mÃ©tadonnÃ©es d'archive si dÃ©jÃ  dÃ©finies par handleMultiFileSelect
+            // Conserver les métadonnées d'archive si déjà définies par handleMultiFileSelect
             if (fileInfo && fileInfo.isArchive && Array.isArray(fileInfo.files)) {
                 fileInfo = { ...baseInfo, isArchive: true, files: fileInfo.files };
             } else {
@@ -2888,20 +2879,20 @@ async function startSend() {
             if (usePassword) {
                 fileInfo.passwordSalt = passwordSaltB64;
                 fileInfo.passwordIterations = passwordIterations;
-                console.log('ðŸ“‹ FileInfo avec mot de passe:', fileInfo);
+                console.log('📋 FileInfo avec mot de passe:', fileInfo);
             } else {
-                console.log('ðŸ“‹ FileInfo sans mot de passe:', fileInfo);
+                console.log('📋 FileInfo sans mot de passe:', fileInfo);
             }
         }
         
         // Ajouter le mode de session aux infos
         fileInfo.sessionMode = sessionMode;
 
-        // Se connecter au serveur WebSocket et crÃ©er la room
+        // Se connecter au serveur WebSocket et créer la room
         connectWebSocket();
     } catch (err) {
-        console.error('âŒ Erreur dans startSend:', err);
-        showError('Erreur lors de la prÃ©paration de l\'envoi: ' + err.message);
+        console.error('❌ Erreur dans startSend:', err);
+        showError('Erreur lors de la préparation de l\'envoi: ' + err.message);
     }
 }
 
@@ -2939,14 +2930,14 @@ async function applyReceiverPassword() {
         return;
     }
     try {
-        console.log('ðŸ” DÃ©rivation du mot de passe reÃ§u...');
+        console.log('🔐 Dérivation du mot de passe reçu...');
         cryptoKey = await deriveKeyFromPassword(pwd, passwordSaltB64, passwordIterations);
-        console.log('âœ… ClÃ© dÃ©rivÃ©e avec succÃ¨s');
+        console.log('✅ Clé dérivée avec succès');
         elements.receiverPasswordBlock.classList.add('hidden');
         
-        // Pour le mode chat ou both, dÃ©marrer directement P2P
+        // Pour le mode chat ou both, démarrer directement P2P
         if (sessionMode === 'chat' || sessionMode === 'both') {
-            console.log('ðŸš€ Mode chat/both : dÃ©marrage P2P automatique...');
+            console.log('🚀 Mode chat/both : démarrage P2P automatique...');
             
             // Masquer toute la section receiver (y compris boutons, infos fichier, etc.)
             const receiverInfo = document.querySelector('.receiver-info');
@@ -2965,26 +2956,26 @@ async function applyReceiverPassword() {
             // Sauvegarder la session
             saveSessionToStorage();
             
-            // Notifier l'expÃ©diteur que le destinataire est prÃªt
+            // Notifier l'expéditeur que le destinataire est prêt
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'receiver-ready' }));
             }
             
-            // DÃ©marrer le peer (non-initiateur)
+            // Démarrer le peer (non-initiateur)
             if (!peer) {
                 initPeer(false);
             }
             
             // Traiter le challenge en attente si applicable
             if (pendingChallenge) {
-                console.log('ðŸ“¬ Traitement du challenge en attente...');
+                console.log('📬 Traitement du challenge en attente...');
                 const challenge = pendingChallenge;
                 pendingChallenge = null;
                 await handleAuthChallenge(challenge);
             }
         } else {
             // Mode fichier : afficher le bouton "Recevoir le fichier"
-            elements.receiverStatus.textContent = 'Mot de passe validÃ©. Cliquez sur le bouton pour recevoir le fichier.';
+            elements.receiverStatus.textContent = 'Mot de passe validé. Cliquez sur le bouton pour recevoir le fichier.';
             if (elements.receiveFileBtn) {
                 elements.receiveFileBtn.classList.remove('hidden');
             }
@@ -2992,13 +2983,13 @@ async function applyReceiverPassword() {
         
         receiverReady = true;
     } catch (err) {
-        console.error('âŒ Erreur dÃ©rivation mot de passe:', err);
+        console.error('❌ Erreur dérivation mot de passe:', err);
         showError('Erreur : ' + err.message);
         elements.receiverPasswordBlock.classList.remove('hidden');
     }
 }
 
-// Fonction appelÃ©e quand l'utilisateur clique sur "Recevoir le fichier"
+// Fonction appelée quand l'utilisateur clique sur "Recevoir le fichier"
 async function startReceiving() {
     if (!receiverReady || !cryptoKey) {
         showToast('Veuillez d\'abord entrer le mot de passe.');
@@ -3008,21 +2999,21 @@ async function startReceiving() {
     elements.receiveFileBtn.classList.add('hidden');
     elements.receiverStatus.textContent = 'Connexion P2P en cours...';
     
-    // DÃ©marrer le peer
-    console.log('ðŸš€ Initialisation du peer...');
+    // Démarrer le peer
+    console.log('🚀 Initialisation du peer...');
     if (!peer) {
         initPeer(false); // Receiver = non-initiateur
     }
     
-    // Notifier l'expÃ©diteur que le destinataire est prÃªt
-    console.log('ðŸ“¤ Envoi de receiver-ready Ã  l\'expÃ©diteur...');
+    // Notifier l'expéditeur que le destinataire est prêt
+    console.log('📤 Envoi de receiver-ready à l\'expéditeur...');
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'receiver-ready' }));
     }
 
     // Puis traiter le challenge en attente
     if (pendingChallenge) {
-        console.log('ðŸ“¬ Traitement du challenge en attente...');
+        console.log('📬 Traitement du challenge en attente...');
         const challenge = pendingChallenge;
         pendingChallenge = null;
         await handleAuthChallenge(challenge);
@@ -3032,14 +3023,14 @@ async function startReceiving() {
 // ===== GESTION DES PSEUDOS =====
 
 function updateConnectedUsersDropdown() {
-    // Interface unifiÃ©e - un seul dropdown
+    // Interface unifiée - un seul dropdown
     const dropdownEl = elements.connectedUsersDropdown;
     const sectionEl = elements.connectedUsersSection;
     
-    console.log(`ðŸ”„ updateConnectedUsersDropdown: participants.size=${participants.size}`);
+    console.log(`🔄 updateConnectedUsersDropdown: participants.size=${participants.size}`);
     
     if (!dropdownEl) {
-        console.log('âš ï¸ Dropdown non trouvÃ©');
+        console.log('⚠️ Dropdown non trouvé');
         return;
     }
     
@@ -3048,28 +3039,28 @@ function updateConnectedUsersDropdown() {
     
     // Ajouter l'utilisateur actuel
     const optionMe = document.createElement('option');
-    optionMe.textContent = `${userPseudo} (vous)` + (isCreator ? ' ðŸ‘‘' : '');
+    optionMe.textContent = `${userPseudo} (vous)` + (isCreator ? ' 👑' : '');
     optionMe.disabled = true;
     dropdownEl.appendChild(optionMe);
     
-    // Ajouter tous les participants (en Ã©vitant les doublons par pseudo)
+    // Ajouter tous les participants (en évitant les doublons par pseudo)
     const addedPseudos = new Set([userPseudo]);
     participants.forEach((info, odId) => {
-        // Ã‰viter les doublons (mÃªme pseudo)
+        // Éviter les doublons (même pseudo)
         if (!addedPseudos.has(info.pseudo)) {
             addedPseudos.add(info.pseudo);
             const optionOther = document.createElement('option');
-            optionOther.textContent = info.pseudo + (info.isCreator ? ' ðŸ‘‘' : '');
+            optionOther.textContent = info.pseudo + (info.isCreator ? ' 👑' : '');
             optionOther.disabled = true;
             dropdownEl.appendChild(optionOther);
         }
     });
     
-    // Toujours montrer la section dÃ¨s qu'il y a au moins 1 autre participant
+    // Toujours montrer la section dès qu'il y a au moins 1 autre participant
     if (sectionEl) {
         if (participants.size > 0) {
             sectionEl.classList.remove('hidden');
-            console.log('âœ… Section dropdown visible');
+            console.log('✅ Section dropdown visible');
         } else {
             sectionEl.classList.add('hidden');
         }
@@ -3080,13 +3071,13 @@ function updateConnectedUsersDropdown() {
 
 async function saveSessionToStorage() {
     try {
-        // Exporter la clÃ© crypto si elle existe (pour pouvoir la restaurer)
+        // Exporter la clé crypto si elle existe (pour pouvoir la restaurer)
         let cryptoKeyB64 = null;
         if (cryptoKey) {
             try {
                 cryptoKeyB64 = await exportKeyToBase64();
             } catch (e) {
-                console.warn('âš ï¸ Impossible d\'exporter la clÃ© crypto:', e);
+                console.warn('⚠️ Impossible d\'exporter la clé crypto:', e);
             }
         }
         
@@ -3096,7 +3087,7 @@ async function saveSessionToStorage() {
             try {
                 ecdhExported = await exportECDHKeyPair();
             } catch (e) {
-                console.warn('âš ï¸ Impossible d\'exporter la paire ECDH:', e);
+                console.warn('⚠️ Impossible d\'exporter la paire ECDH:', e);
             }
         }
         
@@ -3114,16 +3105,16 @@ async function saveSessionToStorage() {
             isCreator: isCreator || false,
             // include minimal fileInfo to restore UI/state if available
             fileInfo: fileInfo || null,
-            // Stocker la clÃ© crypto pour restauration
+            // Stocker la clé crypto pour restauration
             cryptoKeyB64: cryptoKeyB64,
             // Stocker la paire ECDH pour restauration
             ecdhKeyPair: ecdhExported,
             timestamp: Date.now()
         };
         localStorage.setItem('securepeer_session', JSON.stringify(session));
-        console.log('ðŸ’¾ Session sauvegardÃ©e (avec clÃ© crypto et ECDH)');
+        console.log('💾 Session sauvegardée (avec clé crypto et ECDH)');
     } catch (err) {
-        console.error('âŒ Erreur sauvegarde session:', err);
+        console.error('❌ Erreur sauvegarde session:', err);
     }
 }
 
@@ -3134,25 +3125,25 @@ function restoreSessionFromStorage() {
         
         const session = JSON.parse(sessionData);
         
-        // VÃ©rifier que la session n'est pas trop vieille (24h max)
+        // Vérifier que la session n'est pas trop vieille (24h max)
         const age = Date.now() - session.timestamp;
         if (age > 24 * 60 * 60 * 1000) {
-            console.log('â° Session expirÃ©e');
+            console.log('⏰ Session expirée');
             clearSessionStorage();
             return null;
         }
         
-        console.log('ðŸ“‚ Session restaurÃ©e:', session);
+        console.log('📂 Session restaurée:', session);
         return session;
     } catch (err) {
-        console.error('âŒ Erreur restauration session:', err);
+        console.error('❌ Erreur restauration session:', err);
         return null;
     }
 }
 
 function clearSessionStorage() {
     localStorage.removeItem('securepeer_session');
-    console.log('ðŸ—‘ï¸ Session effacÃ©e');
+    console.log('🗑️ Session effacée');
 }
 
 // ===== SAFETY NUMBERS - Persistence =====
@@ -3166,10 +3157,10 @@ function loadKnownFingerprints() {
         if (stored) {
             const data = JSON.parse(stored);
             knownFingerprints = new Map(Object.entries(data));
-            console.log('ðŸ“‚ Fingerprints connus chargÃ©s:', knownFingerprints.size);
+            console.log('📂 Fingerprints connus chargés:', knownFingerprints.size);
         }
     } catch (err) {
-        console.error('âŒ Erreur chargement fingerprints:', err);
+        console.error('❌ Erreur chargement fingerprints:', err);
     }
 }
 
@@ -3181,7 +3172,7 @@ function saveKnownFingerprints() {
         const data = Object.fromEntries(knownFingerprints);
         localStorage.setItem('securepeer_known_fingerprints', JSON.stringify(data));
     } catch (err) {
-        console.error('âŒ Erreur sauvegarde fingerprints:', err);
+        console.error('❌ Erreur sauvegarde fingerprints:', err);
     }
 }
 
@@ -3206,7 +3197,7 @@ function closeSessionProperly() {
 }
 
 function setupCloseSessionButtons() {
-    // Boutons pour fermer la session (attachÃ©s une seule fois)
+    // Boutons pour fermer la session (attachés une seule fois)
     if (elements.closeSession && !elements.closeSession._hasCloseListener) {
         elements.closeSession.addEventListener('click', () => {
             if (confirm('Voulez-vous vraiment fermer cette session ?')) {
@@ -3234,7 +3225,7 @@ function setupCloseSessionButtons() {
         elements.closeReceiverSession._hasCloseListener = true;
     }
     
-    // Bouton de verrouillage de session (crÃ©ateur uniquement)
+    // Bouton de verrouillage de session (créateur uniquement)
     if (elements.lockSessionBtn && !elements.lockSessionBtn._hasLockListener) {
         elements.lockSessionBtn.addEventListener('click', () => {
             toggleSessionLock();
@@ -3242,11 +3233,11 @@ function setupCloseSessionButtons() {
         elements.lockSessionBtn._hasLockListener = true;
     }
     
-    console.log('ðŸšª Event listeners de fermeture de session attachÃ©s');
+    console.log('🚪 Event listeners de fermeture de session attachés');
 }
 
 function handleHashConnection(hash) {
-    // Mode destinataire - cacher la sÃ©lection de mode
+    // Mode destinataire - cacher la sélection de mode
     elements.modeSelection.classList.add('hidden');
     
     const parts = hash.split('_');
@@ -3255,20 +3246,16 @@ function handleHashConnection(hash) {
     // Extraire le mode de session depuis le lien
     // Format: roomId_mode_...reste
     const modeFromLink = parts[1];
-    let keyOrPasswordIndex = 2; // Index oÃ¹ commence la clÃ© ou 'pwd' ou 'ecdh'
+    let keyOrPasswordIndex = 2; // Index où commence la clé ou 'pwd' ou 'ecdh'
     
     if (['file', 'chat', 'both'].includes(modeFromLink)) {
         sessionMode = modeFromLink;
     } else {
-        sessionMode = 'file'; // Par dÃ©faut pour les anciens liens
-        keyOrPasswordIndex = 1; // Pas de mode explicite, la clÃ©/pwd commence Ã  l'index 1
+        sessionMode = 'file'; // Par défaut pour les anciens liens
+        keyOrPasswordIndex = 1; // Pas de mode explicite, la clé/pwd commence à l'index 1
     }
-    
-    // Interface unifiÃ©e - utiliser showSessionInterface pour tout le monde
-    const header = document.querySelector('#sender-section .sender-header h2');
-    const desc = document.querySelector('#sender-section .section-desc');
 
-    // Cas lien protÃ©gÃ© par mot de passe : roomId_mode_pwd_salt_iterations
+    // Cas lien protégé par mot de passe : roomId_mode_pwd_salt_iterations
     if (parts[keyOrPasswordIndex] === 'pwd') {
         isReceiver = true;
         usePassword = true;
@@ -3276,97 +3263,85 @@ function handleHashConnection(hash) {
         passwordSaltB64 = parts[keyOrPasswordIndex + 1];
         passwordIterations = parts[keyOrPasswordIndex + 2] ? parseInt(parts[keyOrPasswordIndex + 2], 10) : KDF_ITERATIONS;
 
-        // Interface unifiÃ©e
-        elements.senderSection.classList.remove('hidden');
-        elements.dropZone.classList.add('hidden');
-        elements.passwordBlock.classList.remove('hidden');
-        elements.sendFileBtn.textContent = 'ðŸ”“ DÃ©verrouiller';
-        elements.linkStatus.textContent = 'Mot de passe requis pour dÃ©chiffrer.';
+        elements.receiverSection.classList.remove('hidden');
+        elements.receiverPasswordBlock.classList.remove('hidden');
+        elements.receiverStatus.textContent = 'Mot de passe requis pour déchiffrer.';
         showEphemeralBadge();
         
+        // Afficher le chat si le mode l'inclut
+        if (sessionMode === 'chat' || sessionMode === 'both') {
+            elements.receiverChatSection.classList.remove('hidden');
+        }
         // Adapter l'interface selon le mode
         if (sessionMode === 'chat') {
-            if (header) header.textContent = 'ðŸ’¬ Rejoindre le chat';
-            if (desc) desc.textContent = 'Entrez le mot de passe pour rejoindre la conversation';
-            elements.chatSection.classList.remove('hidden');
+            document.getElementById('incoming-file-info').classList.add('hidden');
+            elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
+            elements.receiverStatus.textContent = 'Connexion au chat...';
         } else if (sessionMode === 'both') {
-            if (header) header.textContent = 'ðŸ’¬ Chat + Fichiers';
-            if (desc) desc.textContent = 'Entrez le mot de passe pour rejoindre la session';
-            elements.chatSection.classList.remove('hidden');
-            elements.bothFileSection.classList.remove('hidden');
-        } else {
-            if (header) header.textContent = 'ðŸ“¥ Recevoir un fichier';
-            if (desc) desc.textContent = 'Entrez le mot de passe pour recevoir le fichier';
+            elements.receiverBothFileSection.classList.remove('hidden');
+            elements.receiverTitle.textContent = '💬 Chat + Fichiers';
+            document.getElementById('incoming-file-info').classList.add('hidden');
         }
 
         connectWebSocket();
     }
-    // Cas ECDH (Ã©change de clÃ©s Diffie-Hellman) : roomId_mode_ecdh
+    // Cas ECDH (échange de clés Diffie-Hellman) : roomId_mode_ecdh
     else if (parts[keyOrPasswordIndex] === 'ecdh') {
         isReceiver = true;
         usePassword = false;
         
-        // Interface unifiÃ©e
-        elements.senderSection.classList.remove('hidden');
-        elements.dropZone.classList.add('hidden');
-        elements.passwordBlock.classList.add('hidden');
-        elements.linkSection.classList.remove('hidden');
-        elements.linkStatus.textContent = 'Ã‰change de clÃ©s sÃ©curisÃ© en cours...';
-        // Cacher les Ã©lÃ©ments inutiles pour le receiver
-        if (elements.shareLink) elements.shareLink.parentElement.classList.add('hidden');
-        if (document.getElementById('qrcode-container')) document.getElementById('qrcode-container').classList.add('hidden');
+        elements.receiverSection.classList.remove('hidden');
+        elements.receiverStatus.textContent = 'Échange de clés sécurisé en cours...';
         showEphemeralBadge();
         
+        // Afficher le chat si le mode l'inclut
+        if (sessionMode === 'chat' || sessionMode === 'both') {
+            elements.receiverChatSection.classList.remove('hidden');
+        }
         // Adapter l'interface selon le mode
         if (sessionMode === 'chat') {
-            if (header) header.textContent = 'ðŸ’¬ Rejoindre le chat';
-            if (desc) desc.textContent = 'Connexion sÃ©curisÃ©e en cours...';
-            elements.chatSection.classList.remove('hidden');
+            document.getElementById('incoming-file-info').classList.add('hidden');
+            elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
         } else if (sessionMode === 'both') {
-            if (header) header.textContent = 'ðŸ’¬ Chat + Fichiers';
-            if (desc) desc.textContent = 'Connexion sÃ©curisÃ©e en cours...';
-            elements.chatSection.classList.remove('hidden');
-            elements.bothFileSection.classList.remove('hidden');
-        } else {
-            if (header) header.textContent = 'ðŸ“¥ Recevoir un fichier';
-            if (desc) desc.textContent = 'Connexion sÃ©curisÃ©e en cours...';
+            elements.receiverBothFileSection.classList.remove('hidden');
+            elements.receiverTitle.textContent = '💬 Chat + Fichiers';
+            document.getElementById('incoming-file-info').classList.add('hidden');
         }
 
-        // GÃ©nÃ©rer notre paire ECDH puis connecter
+        // Générer notre paire ECDH puis connecter
         generateECDHKeyPair().then(() => {
             connectWebSocket();
         }).catch(err => {
-            console.error('âŒ Erreur gÃ©nÃ©ration ECDH:', err);
-            showError('Erreur lors de la gÃ©nÃ©ration des clÃ©s sÃ©curisÃ©es.');
+            console.error('❌ Erreur génération ECDH:', err);
+            showError('Erreur lors de la génération des clés sécurisées.');
         });
     } else {
-        // Lien legacy avec clÃ© incluse (pour rÃ©trocompatibilitÃ©)
+        // Lien legacy avec clé incluse (pour rétrocompatibilité)
         const keyString = parts.slice(keyOrPasswordIndex).join('_');
         isReceiver = true;
 
-        // Interface unifiÃ©e
-        elements.senderSection.classList.remove('hidden');
-        elements.dropZone.classList.add('hidden');
-        elements.linkSection.classList.remove('hidden');
-        elements.linkStatus.textContent = 'Connexion en cours...';
+        elements.receiverSection.classList.remove('hidden');
         showEphemeralBadge();
         
+        // Afficher le chat si le mode l'inclut
+        if (sessionMode === 'chat' || sessionMode === 'both') {
+            elements.receiverChatSection.classList.remove('hidden');
+        }
         // Adapter l'interface selon le mode
         if (sessionMode === 'chat') {
-            if (header) header.textContent = 'ðŸ’¬ Rejoindre le chat';
-            elements.chatSection.classList.remove('hidden');
+            document.getElementById('incoming-file-info').classList.add('hidden');
+            elements.receiverTitle.textContent = '💬 Chat P2P sécurisé';
+            elements.receiverStatus.textContent = 'Connexion au chat...';
         } else if (sessionMode === 'both') {
-            if (header) header.textContent = 'ðŸ’¬ Chat + Fichiers';
-            elements.chatSection.classList.remove('hidden');
-            elements.bothFileSection.classList.remove('hidden');
-        } else {
-            if (header) header.textContent = 'ðŸ“¥ Recevoir un fichier';
+            elements.receiverBothFileSection.classList.remove('hidden');
+            elements.receiverTitle.textContent = '💬 Chat + Fichiers';
+            document.getElementById('incoming-file-info').classList.add('hidden');
         }
 
         importKeyFromBase64(keyString).then(() => {
             connectWebSocket();
         }).catch(err => {
-            showError('Lien invalide : impossible de dÃ©coder la clÃ© de chiffrement.');
+            showError('Lien invalide : impossible de décoder la clé de chiffrement.');
         });
     }
 }
@@ -3374,21 +3349,21 @@ function handleHashConnection(hash) {
 // ===== INITIALISATION =====
 
 function init() {
-    // VÃ©rifier la prÃ©sence de la Web Crypto API
+    // Vérifier la présence de la Web Crypto API
     if (!window.crypto || !window.crypto.subtle) {
-        showError('La Web Crypto API n\'est pas disponible dans ce navigateur. Utilisez Chrome, Firefox, Edge ou Safari rÃ©cent.');
+        showError('La Web Crypto API n\'est pas disponible dans ce navigateur. Utilisez Chrome, Firefox, Edge ou Safari récent.');
         return;
     }
     
-    // VÃ©rifier si on est en mode destinataire (URL avec hash = lien de partage)
+    // Vérifier si on est en mode destinataire (URL avec hash = lien de partage)
     const hash = window.location.hash.substring(1);
     
     if (hash && hash.includes('_')) {
-        // Lien de partage dÃ©tectÃ© - cacher la landing, demander pseudo puis connecter
+        // Lien de partage détecté - cacher la landing, demander pseudo puis connecter
         elements.landingPage.classList.add('hidden');
         showPseudoThenConnect(hash);
     } else {
-        // Afficher la landing page par dÃ©faut
+        // Afficher la landing page par défaut
         elements.landingPage.classList.remove('hidden');
         elements.pseudoSection.classList.add('hidden');
         elements.modeSelection.classList.add('hidden');
@@ -3400,42 +3375,42 @@ function init() {
 
 // Setup de la landing page
 function setupLandingPage() {
-    console.log('ðŸš€ setupLandingPage called, startSessionBtn:', elements.startSessionBtn);
+    console.log('🚀 setupLandingPage called, startSessionBtn:', elements.startSessionBtn);
     if (elements.startSessionBtn) {
         elements.startSessionBtn.addEventListener('click', () => {
-            elements.startSessionBtn.disabled = true; // EmpÃªche le double clic
-            console.log('âœ… Bouton Commencer cliquÃ©!');
-            // Cacher la landing, montrer la sÃ©lection de mode directement
+            elements.startSessionBtn.disabled = true; // Empêche le double clic
+            console.log('✅ Bouton Commencer cliqué!');
+            // Cacher la landing, montrer la sélection de mode directement
             elements.landingPage.classList.add('hidden');
             elements.modeSelection.classList.remove('hidden');
-            // Setup des cartes de sÃ©lection de mode
+            // Setup des cartes de sélection de mode
             setupModeSelection();
         });
     } else {
-        console.error('âŒ startSessionBtn non trouvÃ©!');
+        console.error('❌ startSessionBtn non trouvé!');
     }
 }
 
 // Demander le pseudo puis connecter (pour receivers)
 function showPseudoThenConnect(hash) {
-    // Toujours demander le pseudo, ignorer le pseudo sauvegardÃ©
+    // Toujours demander le pseudo, ignorer le pseudo sauvegardé
     elements.pseudoSection.classList.remove('hidden');
     elements.pseudoInputMain.value = '';
     elements.pseudoInputMain?.focus();
     elements.pseudoConfirmBtn.onclick = () => {
         const pseudoValue = elements.pseudoInputMain.value.trim();
         if (!pseudoValue || pseudoValue.length < 3) {
-            showToast('âš ï¸ Le pseudo doit faire au moins 3 caractÃ¨res');
+            showToast('⚠️ Le pseudo doit faire au moins 3 caractères');
             return;
         }
         if (pseudoValue.length > 20) {
-            showToast('âš ï¸ Le pseudo doit faire maximum 20 caractÃ¨res');
+            showToast('⚠️ Le pseudo doit faire maximum 20 caractères');
             return;
         }
         // Sauvegarder le pseudo uniquement pour la session
         userPseudo = pseudoValue;
         localStorage.setItem('securepeer_pseudo', pseudoValue);
-        console.log('âœ… Pseudo dÃ©fini:', userPseudo);
+        console.log('✅ Pseudo défini:', userPseudo);
         // Cacher la section pseudo et connecter
         elements.pseudoSection.classList.add('hidden');
         handleHashConnection(hash);
@@ -3444,52 +3419,52 @@ function showPseudoThenConnect(hash) {
     };
 }
 
-// Afficher l'interface crÃ©ateur selon le mode
+// Afficher l'interface créateur selon le mode
 function showCreatorInterface(mode) {
     // Setup du chat et des fichiers
     setupChat();
     setupBothModeFiles();
     setupEventListeners();
     
-    // RÃ©cupÃ©rer les Ã©lÃ©ments de header
+    // Récupérer les éléments de header
     const header = document.querySelector('#sender-section .sender-header h2');
     const desc = document.querySelector('#sender-section .section-desc');
     
-    // Afficher la section appropriÃ©e
+    // Afficher la section appropriée
     if (mode === 'chat') {
         elements.senderSection.classList.remove('hidden');
         elements.dropZone.classList.add('hidden');
         elements.passwordBlock.classList.remove('hidden');
-        elements.sendFileBtn.textContent = 'ðŸ’¬ DÃ©marrer le chat';
-        if (header) header.textContent = 'ðŸ’¬ Chat sÃ©curisÃ©';
-        if (desc) desc.textContent = 'DÃ©marrez une conversation chiffrÃ©e de bout en bout';
+        elements.sendFileBtn.textContent = '💬 Démarrer le chat';
+        if (header) header.textContent = '💬 Chat sécurisé';
+        if (desc) desc.textContent = 'Démarrez une conversation chiffrée de bout en bout';
     } else if (mode === 'file') {
         elements.senderSection.classList.remove('hidden');
         elements.dropZone.classList.remove('hidden');
-        if (header) header.textContent = 'ðŸ“¤ Envoyer un fichier';
-        if (desc) desc.textContent = 'Choisissez un fichier et partagez le lien sÃ©curisÃ©';
+        if (header) header.textContent = '📤 Envoyer un fichier';
+        if (desc) desc.textContent = 'Choisissez un fichier et partagez le lien sécurisé';
     } else {
         // mode 'both'
         elements.senderSection.classList.remove('hidden');
         elements.dropZone.classList.add('hidden');
         elements.passwordBlock.classList.remove('hidden');
-        elements.sendFileBtn.textContent = 'ðŸš€ DÃ©marrer la session';
-        if (header) header.textContent = 'ðŸ’¬ Chat + Fichiers';
-        if (desc) desc.textContent = 'Discutez et Ã©changez des fichiers en temps rÃ©el';
+        elements.sendFileBtn.textContent = '🚀 Démarrer la session';
+        if (header) header.textContent = '💬 Chat + Fichiers';
+        if (desc) desc.textContent = 'Discutez et échangez des fichiers en temps réel';
     }
-    console.log('ðŸ“‹ Interface crÃ©ateur affichÃ©e pour mode:', mode);
+    console.log('📋 Interface créateur affichée pour mode:', mode);
 }
 
 function continueInit() {
     // Cacher la section pseudo
     elements.pseudoSection.classList.add('hidden');
     
-    // Mode expÃ©diteur - afficher la sÃ©lection de mode
+    // Mode expéditeur - afficher la sélection de mode
     isReceiver = false;
     elements.modeSelection.classList.remove('hidden');
     elements.senderSection.classList.add('hidden');
     
-    // Setup des cartes de sÃ©lection de mode
+    // Setup des cartes de sélection de mode
     setupModeSelection();
     
     // Setup du chat
@@ -3537,8 +3512,8 @@ function setupEventListeners() {
                 await handleMultiFileSelect(files);
             }
         } catch (err) {
-            console.error('âŒ Erreur dans file input change event:', err);
-            showError('Erreur lors de la sÃ©lection du fichier');
+            console.error('❌ Erreur dans file input change event:', err);
+            showError('Erreur lors de la sélection du fichier');
         } finally {
             elements.fileInput.value = '';
         }
@@ -3554,7 +3529,7 @@ function setupEventListeners() {
     elements.copyLink.addEventListener('click', () => {
         elements.shareLink.select();
         navigator.clipboard.writeText(elements.shareLink.value);
-        showToast('Lien copiÃ© !');
+        showToast('Lien copié !');
     });
     
     elements.newTransfer.addEventListener('click', () => {
@@ -3563,7 +3538,7 @@ function setupEventListeners() {
     });
     
     elements.retryTransfer.addEventListener('click', () => {
-        // Effacer la session pour Ã©viter de recharger une session invalide
+        // Effacer la session pour éviter de recharger une session invalide
         clearSessionStorage();
         window.location.href = window.location.origin + window.location.pathname;
     });
@@ -3589,8 +3564,8 @@ function setupEventListeners() {
         elements.receiveFileBtn.addEventListener('click', startReceiving);
     }
     
-    // SÃ©lecteur de langue: initialisÃ© une seule fois via DOMContentLoaded
-    // (Ã©vite les doubles Ã©couteurs qui togglent deux fois et referment le menu)
+    // Sélecteur de langue: initialisé une seule fois via DOMContentLoaded
+    // (évite les doubles écouteurs qui togglent deux fois et referment le menu)
 }
 
 function setupLanguageSelector() {
@@ -3617,7 +3592,7 @@ function setupLanguageSelector() {
         }
     });
     
-    // SÃ©lection de langue
+    // Sélection de langue
     document.querySelectorAll('.lang-option').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
@@ -3641,84 +3616,84 @@ function setLanguage(lang) {
 function updateLanguage() {
     const languageToggle = document.getElementById('language-toggle');
     const langNames = {
-        fr: 'ðŸ‡«ðŸ‡· FR',
-        en: 'ðŸ‡¬ðŸ‡§ EN',
-        es: 'ðŸ‡ªðŸ‡¸ ES',
-        it: 'ðŸ‡®ðŸ‡¹ IT',
-        ru: 'ðŸ‡·ðŸ‡º RU'
+        fr: '🇫🇷 FR',
+        en: '🇬🇧 EN',
+        es: '🇪🇸 ES',
+        it: '🇮🇹 IT',
+        ru: '🇷🇺 RU'
     };
     
     if (languageToggle) {
         languageToggle.textContent = langNames[currentLanguage] || langNames.fr;
     }
     
-    // Mettre Ã  jour l'option active
+    // Mettre à jour l'option active
     document.querySelectorAll('.lang-option').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.lang === currentLanguage);
     });
     
-    // Mettre Ã  jour les textes de la page
+    // Mettre à jour les textes de la page
     const translations = {
         fr: {
-            title: 'ðŸ”’ SecurePeer',
-            subtitle: 'Transfert de fichiers chiffrÃ© de bout en bout, sans serveur intermÃ©diaire',
-            modeTitle: 'ðŸš€ CrÃ©er une session',
-            modeDesc: 'Choisissez le type de session que vous souhaitez dÃ©marrer',
+            title: '🔒 SecurePeer',
+            subtitle: 'Transfert de fichiers chiffré de bout en bout, sans serveur intermédiaire',
+            modeTitle: '🚀 Créer une session',
+            modeDesc: 'Choisissez le type de session que vous souhaitez démarrer',
             modeFile: 'Transfert de fichiers',
-            modeFileDesc: 'Envoyez des fichiers de maniÃ¨re sÃ©curisÃ©e',
-            modeChat: 'Chat sÃ©curisÃ©',
-            modeChatDesc: 'Discutez en temps rÃ©el, chiffrÃ© E2E',
+            modeFileDesc: 'Envoyez des fichiers de manière sécurisée',
+            modeChat: 'Chat sécurisé',
+            modeChatDesc: 'Discutez en temps réel, chiffré E2E',
             modeBoth: 'Fichiers + Chat',
-            modeBothDesc: 'TransfÃ©rez et discutez simultanÃ©ment',
-            senderHeader: 'ðŸ“¤ Envoyer un fichier',
-            sectionDesc: 'Choisissez un fichier et partagez le lien sÃ©curisÃ©',
-            dropZone: 'Glissez-dÃ©posez un fichier ici',
-            or: 'ou cliquez pour sÃ©lectionner',
+            modeBothDesc: 'Transférez et discutez simultanément',
+            senderHeader: '📤 Envoyer un fichier',
+            sectionDesc: 'Choisissez un fichier et partagez le lien sécurisé',
+            dropZone: 'Glissez-déposez un fichier ici',
+            or: 'ou cliquez pour sélectionner',
             chooseFile: 'Choisir un fichier',
-            deleteFile: 'âœ• Supprimer',
-            password: 'ðŸ” Protection par mot de passe (optionnel)',
-            passwordPlaceholder: 'Entrez un mot de passe pour plus de sÃ©curitÃ©',
-            sendBtn: 'ðŸ“¤ Envoyer le fichier',
-            startChatBtn: 'ðŸ’¬ DÃ©marrer le chat',
+            deleteFile: '✕ Supprimer',
+            password: '🔐 Protection par mot de passe (optionnel)',
+            passwordPlaceholder: 'Entrez un mot de passe pour plus de sécurité',
+            sendBtn: '📤 Envoyer le fichier',
+            startChatBtn: '💬 Démarrer le chat',
             passwordHint: 'Le mot de passe ne quitte jamais votre appareil',
-            shareTitle: 'ðŸ”— Lien de partage gÃ©nÃ©rÃ©',
+            shareTitle: '🔗 Lien de partage généré',
             linkInfo: 'Partagez ce lien avec le destinataire',
-            copyBtn: 'ðŸ“‹ Copier',
-            waiting: 'ðŸ“ En attente du destinataire...',
-            chatTitle: 'ðŸ’¬ Chat sÃ©curisÃ©',
+            copyBtn: '📋 Copier',
+            waiting: '📍 En attente du destinataire...',
+            chatTitle: '💬 Chat sécurisé',
             chatPlaceholder: 'Tapez votre message...',
             chatSend: 'Envoyer',
             chatWaiting: 'En attente...',
-            chatConnected: 'ConnectÃ©',
-            chatP2PTitle: 'ðŸ’¬ Chat P2P sÃ©curisÃ©',
-            chatFilesTitle: 'ðŸ’¬ Chat + Fichiers',
-            filesTitle: 'ðŸ“ Fichiers',
-            addFile: 'ðŸ“Ž Ajouter',
-            sendFiles: 'ðŸ“¤ Envoyer',
+            chatConnected: 'Connecté',
+            chatP2PTitle: '💬 Chat P2P sécurisé',
+            chatFilesTitle: '💬 Chat + Fichiers',
+            filesTitle: '📁 Fichiers',
+            addFile: '📎 Ajouter',
+            sendFiles: '📤 Envoyer',
             pending: 'En attente',
-            receiving: 'RÃ©ception...',
-            sent: 'EnvoyÃ©',
-            download: 'ðŸ“¥ TÃ©lÃ©charger',
-            receiverTitle: 'ðŸ“¥ RÃ©ception de fichier',
+            receiving: 'Réception...',
+            sent: 'Envoyé',
+            download: '📥 Télécharger',
+            receiverTitle: '📥 Réception de fichier',
             receiverPassword: 'Mot de passe requis',
-            receiverPasswordPlaceholder: 'Entrez le mot de passe partagÃ©',
-            unlockBtn: 'DÃ©verrouiller',
-            passwordHintReceiver: 'Le mot de passe reste sur cet appareil et dÃ©rive la clÃ© de chiffrement.',
-            receiveBtn: 'ðŸ“¥ Recevoir le fichier',
+            receiverPasswordPlaceholder: 'Entrez le mot de passe partagé',
+            unlockBtn: 'Déverrouiller',
+            passwordHintReceiver: 'Le mot de passe reste sur cet appareil et dérive la clé de chiffrement.',
+            receiveBtn: '📥 Recevoir le fichier',
             connecting: 'Connexion en cours...',
             transferProgress: 'Transfert en cours...',
-            complete: 'Transfert terminÃ© !',
-            integrity: 'IntÃ©gritÃ© vÃ©rifiÃ©e (SHA-256)',
+            complete: 'Transfert terminé !',
+            integrity: 'Intégrité vérifiée (SHA-256)',
             newTransfer: 'Nouveau transfert',
             qrHint: 'Scannez pour recevoir sur mobile',
             error: 'Erreur',
-            retry: 'RÃ©essayer',
-            footer: 'ðŸ” Chiffrement AES-256-GCM | ðŸŒ WebRTC P2P | ðŸš« Aucune donnÃ©e stockÃ©e sur le serveur | SecurePeer'
+            retry: 'Réessayer',
+            footer: '🔐 Chiffrement AES-256-GCM | 🌐 WebRTC P2P | 🚫 Aucune donnée stockée sur le serveur | SecurePeer'
         },
         en: {
-            title: 'ðŸ”’ SecurePeer',
+            title: '🔒 SecurePeer',
             subtitle: 'End-to-end encrypted file transfer, no intermediate server',
-            modeTitle: 'ðŸš€ Create a session',
+            modeTitle: '🚀 Create a session',
             modeDesc: 'Choose the type of session you want to start',
             modeFile: 'File Transfer',
             modeFileDesc: 'Send files securely',
@@ -3726,41 +3701,41 @@ function updateLanguage() {
             modeChatDesc: 'Chat in real-time, E2E encrypted',
             modeBoth: 'Files + Chat',
             modeBothDesc: 'Transfer and chat simultaneously',
-            senderHeader: 'ðŸ“¤ Send a file',
+            senderHeader: '📤 Send a file',
             sectionDesc: 'Choose a file and share the secure link',
             dropZone: 'Drag and drop a file here',
             or: 'or click to select',
             chooseFile: 'Choose a file',
-            deleteFile: 'âœ• Delete',
-            password: 'ðŸ” Password protection (optional)',
+            deleteFile: '✕ Delete',
+            password: '🔐 Password protection (optional)',
             passwordPlaceholder: 'Enter a password for extra security',
-            sendBtn: 'ðŸ“¤ Send file',
-            startChatBtn: 'ðŸ’¬ Start chat',
+            sendBtn: '📤 Send file',
+            startChatBtn: '💬 Start chat',
             passwordHint: 'Your password never leaves your device',
-            shareTitle: 'ðŸ”— Share link generated',
+            shareTitle: '🔗 Share link generated',
             linkInfo: 'Share this link with the recipient',
-            copyBtn: 'ðŸ“‹ Copy',
-            waiting: 'ðŸ“ Waiting for recipient...',
-            chatTitle: 'ðŸ’¬ Secure Chat',
+            copyBtn: '📋 Copy',
+            waiting: '📍 Waiting for recipient...',
+            chatTitle: '💬 Secure Chat',
             chatPlaceholder: 'Type your message...',
             chatSend: 'Send',
             chatWaiting: 'Waiting...',
             chatConnected: 'Connected',
-            chatP2PTitle: 'ðŸ’¬ Secure P2P Chat',
-            chatFilesTitle: 'ðŸ’¬ Chat + Files',
-            filesTitle: 'ðŸ“ Files',
-            addFile: 'ðŸ“Ž Add',
-            sendFiles: 'ðŸ“¤ Send',
+            chatP2PTitle: '💬 Secure P2P Chat',
+            chatFilesTitle: '💬 Chat + Files',
+            filesTitle: '📁 Files',
+            addFile: '📎 Add',
+            sendFiles: '📤 Send',
             pending: 'Pending',
             receiving: 'Receiving...',
             sent: 'Sent',
-            download: 'ðŸ“¥ Download',
-            receiverTitle: 'ðŸ“¥ Receiving file',
+            download: '📥 Download',
+            receiverTitle: '📥 Receiving file',
             receiverPassword: 'Password required',
             receiverPasswordPlaceholder: 'Enter the shared password',
             unlockBtn: 'Unlock',
             passwordHintReceiver: 'Password stays on this device and derives the encryption key.',
-            receiveBtn: 'ðŸ“¥ Receive file',
+            receiveBtn: '📥 Receive file',
             connecting: 'Connecting...',
             transferProgress: 'Transfer in progress...',
             complete: 'Transfer complete!',
@@ -3769,68 +3744,68 @@ function updateLanguage() {
             qrHint: 'Scan to receive on mobile',
             error: 'Error',
             retry: 'Retry',
-            footer: 'ðŸ” AES-256-GCM Encryption | ðŸŒ WebRTC P2P | ðŸš« No data stored on server | SecurePeer'
+            footer: '🔐 AES-256-GCM Encryption | 🌐 WebRTC P2P | 🚫 No data stored on server | SecurePeer'
         },
         es: {
-            title: 'ðŸ”’ SecurePeer',
+            title: '🔒 SecurePeer',
             subtitle: 'Transferencia de archivos cifrada de extremo a extremo, sin servidor intermedio',
-            modeTitle: 'ðŸš€ Crear una sesiÃ³n',
-            modeDesc: 'Elige el tipo de sesiÃ³n que quieres iniciar',
+            modeTitle: '🚀 Crear una sesión',
+            modeDesc: 'Elige el tipo de sesión que quieres iniciar',
             modeFile: 'Transferencia de archivos',
-            modeFileDesc: 'EnvÃ­a archivos de forma segura',
+            modeFileDesc: 'Envía archivos de forma segura',
             modeChat: 'Chat seguro',
             modeChatDesc: 'Chatea en tiempo real, cifrado E2E',
             modeBoth: 'Archivos + Chat',
-            modeBothDesc: 'Transfiere y chatea simultÃ¡neamente',
-            senderHeader: 'ðŸ“¤ Enviar un archivo',
+            modeBothDesc: 'Transfiere y chatea simultáneamente',
+            senderHeader: '📤 Enviar un archivo',
             sectionDesc: 'Elige un archivo y comparte el enlace seguro',
-            dropZone: 'Arrastra y suelta un archivo aquÃ­',
+            dropZone: 'Arrastra y suelta un archivo aquí',
             or: 'o haz clic para seleccionar',
             chooseFile: 'Elegir un archivo',
-            deleteFile: 'âœ• Eliminar',
-            password: 'ðŸ” ProtecciÃ³n por contraseÃ±a (opcional)',
-            passwordPlaceholder: 'Ingresa una contraseÃ±a para mayor seguridad',
-            sendBtn: 'ðŸ“¤ Enviar archivo',
-            startChatBtn: 'ðŸ’¬ Iniciar chat',
-            passwordHint: 'Tu contraseÃ±a nunca sale de tu dispositivo',
-            shareTitle: 'ðŸ”— Enlace de compartir generado',
+            deleteFile: '✕ Eliminar',
+            password: '🔐 Protección por contraseña (opcional)',
+            passwordPlaceholder: 'Ingresa una contraseña para mayor seguridad',
+            sendBtn: '📤 Enviar archivo',
+            startChatBtn: '💬 Iniciar chat',
+            passwordHint: 'Tu contraseña nunca sale de tu dispositivo',
+            shareTitle: '🔗 Enlace de compartir generado',
             linkInfo: 'Comparte este enlace con el destinatario',
-            copyBtn: 'ðŸ“‹ Copiar',
-            waiting: 'ðŸ“ Esperando al destinatario...',
-            chatTitle: 'ðŸ’¬ Chat seguro',
+            copyBtn: '📋 Copiar',
+            waiting: '📍 Esperando al destinatario...',
+            chatTitle: '💬 Chat seguro',
             chatPlaceholder: 'Escribe tu mensaje...',
             chatSend: 'Enviar',
             chatWaiting: 'Esperando...',
             chatConnected: 'Conectado',
-            chatP2PTitle: 'ðŸ’¬ Chat P2P seguro',
-            chatFilesTitle: 'ðŸ’¬ Chat + Archivos',
-            filesTitle: 'ðŸ“ Archivos',
-            addFile: 'ðŸ“Ž AÃ±adir',
-            sendFiles: 'ðŸ“¤ Enviar',
+            chatP2PTitle: '💬 Chat P2P seguro',
+            chatFilesTitle: '💬 Chat + Archivos',
+            filesTitle: '📁 Archivos',
+            addFile: '📎 Añadir',
+            sendFiles: '📤 Enviar',
             pending: 'Pendiente',
             receiving: 'Recibiendo...',
             sent: 'Enviado',
-            download: 'ðŸ“¥ Descargar',
-            receiverTitle: 'ðŸ“¥ Recibiendo archivo',
-            receiverPassword: 'Se requiere contraseÃ±a',
-            receiverPasswordPlaceholder: 'Ingresa la contraseÃ±a compartida',
+            download: '📥 Descargar',
+            receiverTitle: '📥 Recibiendo archivo',
+            receiverPassword: 'Se requiere contraseña',
+            receiverPasswordPlaceholder: 'Ingresa la contraseña compartida',
             unlockBtn: 'Desbloquear',
-            passwordHintReceiver: 'La contraseÃ±a se mantiene en este dispositivo y deriva la clave de cifrado.',
-            receiveBtn: 'ðŸ“¥ Recibir archivo',
+            passwordHintReceiver: 'La contraseña se mantiene en este dispositivo y deriva la clave de cifrado.',
+            receiveBtn: '📥 Recibir archivo',
             connecting: 'Conectando...',
             transferProgress: 'Transferencia en progreso...',
-            complete: 'Â¡Transferencia completada!',
+            complete: '¡Transferencia completada!',
             integrity: 'Integridad verificada (SHA-256)',
             newTransfer: 'Nueva transferencia',
-            qrHint: 'Escanea para recibir en el mÃ³vil',
+            qrHint: 'Escanea para recibir en el móvil',
             error: 'Error',
             retry: 'Reintentar',
-            footer: 'ðŸ” Cifrado AES-256-GCM | ðŸŒ WebRTC P2P | ðŸš« Sin datos almacenados en servidor | SecurePeer'
+            footer: '🔐 Cifrado AES-256-GCM | 🌐 WebRTC P2P | 🚫 Sin datos almacenados en servidor | SecurePeer'
         },
         it: {
-            title: 'ðŸ”’ SecurePeer',
+            title: '🔒 SecurePeer',
             subtitle: 'Trasferimento file crittografato end-to-end, senza server intermediario',
-            modeTitle: 'ðŸš€ Crea una sessione',
+            modeTitle: '🚀 Crea una sessione',
             modeDesc: 'Scegli il tipo di sessione che vuoi avviare',
             modeFile: 'Trasferimento file',
             modeFileDesc: 'Invia file in modo sicuro',
@@ -3838,126 +3813,126 @@ function updateLanguage() {
             modeChatDesc: 'Chatta in tempo reale, crittografato E2E',
             modeBoth: 'File + Chat',
             modeBothDesc: 'Trasferisci e chatta simultaneamente',
-            senderHeader: 'ðŸ“¤ Invia un file',
+            senderHeader: '📤 Invia un file',
             sectionDesc: 'Scegli un file e condividi il collegamento sicuro',
             dropZone: 'Trascina e rilascia un file qui',
             or: 'o fai clic per selezionare',
             chooseFile: 'Scegli un file',
-            deleteFile: 'âœ• Elimina',
-            password: 'ðŸ” Protezione con password (facoltativa)',
+            deleteFile: '✕ Elimina',
+            password: '🔐 Protezione con password (facoltativa)',
             passwordPlaceholder: 'Inserisci una password per maggiore sicurezza',
-            sendBtn: 'ðŸ“¤ Invia file',
-            startChatBtn: 'ðŸ’¬ Avvia chat',
+            sendBtn: '📤 Invia file',
+            startChatBtn: '💬 Avvia chat',
             passwordHint: 'La tua password non lascia mai il tuo dispositivo',
-            shareTitle: 'ðŸ”— Collegamento di condivisione generato',
+            shareTitle: '🔗 Collegamento di condivisione generato',
             linkInfo: 'Condividi questo collegamento con il destinatario',
-            copyBtn: 'ðŸ“‹ Copia',
-            waiting: 'ðŸ“ In attesa del destinatario...',
-            chatTitle: 'ðŸ’¬ Chat sicura',
+            copyBtn: '📋 Copia',
+            waiting: '📍 In attesa del destinatario...',
+            chatTitle: '💬 Chat sicura',
             chatPlaceholder: 'Scrivi il tuo messaggio...',
             chatSend: 'Invia',
             chatWaiting: 'In attesa...',
             chatConnected: 'Connesso',
-            chatP2PTitle: 'ðŸ’¬ Chat P2P sicura',
-            chatFilesTitle: 'ðŸ’¬ Chat + File',
-            filesTitle: 'ðŸ“ File',
-            addFile: 'ðŸ“Ž Aggiungi',
-            sendFiles: 'ðŸ“¤ Invia',
+            chatP2PTitle: '💬 Chat P2P sicura',
+            chatFilesTitle: '💬 Chat + File',
+            filesTitle: '📁 File',
+            addFile: '📎 Aggiungi',
+            sendFiles: '📤 Invia',
             pending: 'In attesa',
             receiving: 'Ricezione...',
             sent: 'Inviato',
-            download: 'ðŸ“¥ Scarica',
-            receiverTitle: 'ðŸ“¥ Ricezione file',
+            download: '📥 Scarica',
+            receiverTitle: '📥 Ricezione file',
             receiverPassword: 'Password richiesta',
             receiverPasswordPlaceholder: 'Inserisci la password condivisa',
             unlockBtn: 'Sblocca',
             passwordHintReceiver: 'La password rimane su questo dispositivo e deriva la chiave di crittografia.',
-            receiveBtn: 'ðŸ“¥ Ricevi file',
+            receiveBtn: '📥 Ricevi file',
             connecting: 'Connessione in corso...',
             transferProgress: 'Trasferimento in corso...',
             complete: 'Trasferimento completato!',
-            integrity: 'IntegritÃ  verificata (SHA-256)',
+            integrity: 'Integrità verificata (SHA-256)',
             newTransfer: 'Nuovo trasferimento',
             qrHint: 'Scansiona per ricevere sul cellulare',
             error: 'Errore',
             retry: 'Riprova',
-            footer: 'ðŸ” Crittografia AES-256-GCM | ðŸŒ WebRTC P2P | ðŸš« Nessun dato archiviato sul server | SecurePeer'
+            footer: '🔐 Crittografia AES-256-GCM | 🌐 WebRTC P2P | 🚫 Nessun dato archiviato sul server | SecurePeer'
         },
         ru: {
-            title: 'ðŸ”’ SecurePeer',
-            subtitle: 'Ð¡ÐºÐ²Ð¾Ð·Ð½Ð¾Ðµ Ð·Ð°ÑˆÐ¸Ñ„Ñ€Ð¾Ð²Ð°Ð½Ð½Ð°Ñ Ð¿ÐµÑ€ÐµÐ´Ð°Ñ‡Ð° Ñ„Ð°Ð¹Ð»Ð¾Ð² Ð±ÐµÐ· Ð¿Ñ€Ð¾Ð¼ÐµÐ¶ÑƒÑ‚Ð¾Ñ‡Ð½Ð¾Ð³Ð¾ ÑÐµÑ€Ð²ÐµÑ€Ð°',
-            modeTitle: 'ðŸš€ Ð¡Ð¾Ð·Ð´Ð°Ñ‚ÑŒ ÑÐµÑÑÐ¸ÑŽ',
-            modeDesc: 'Ð’Ñ‹Ð±ÐµÑ€Ð¸Ñ‚Ðµ Ñ‚Ð¸Ð¿ ÑÐµÑÑÐ¸Ð¸, ÐºÐ¾Ñ‚Ð¾Ñ€ÑƒÑŽ Ñ…Ð¾Ñ‚Ð¸Ñ‚Ðµ Ð½Ð°Ñ‡Ð°Ñ‚ÑŒ',
-            modeFile: 'ÐŸÐµÑ€ÐµÐ´Ð°Ñ‡Ð° Ñ„Ð°Ð¹Ð»Ð¾Ð²',
-            modeFileDesc: 'ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÑÐ¹Ñ‚Ðµ Ñ„Ð°Ð¹Ð»Ñ‹ Ð±ÐµÐ·Ð¾Ð¿Ð°ÑÐ½Ð¾',
-            modeChat: 'Ð‘ÐµÐ·Ð¾Ð¿Ð°ÑÐ½Ñ‹Ð¹ Ñ‡Ð°Ñ‚',
-            modeChatDesc: 'ÐžÐ±Ñ‰Ð°Ð¹Ñ‚ÐµÑÑŒ Ð² Ñ€ÐµÐ°Ð»ÑŒÐ½Ð¾Ð¼ Ð²Ñ€ÐµÐ¼ÐµÐ½Ð¸, E2E ÑˆÐ¸Ñ„Ñ€Ð¾Ð²Ð°Ð½Ð¸Ðµ',
-            modeBoth: 'Ð¤Ð°Ð¹Ð»Ñ‹ + Ð§Ð°Ñ‚',
-            modeBothDesc: 'ÐŸÐµÑ€ÐµÐ´Ð°Ð²Ð°Ð¹Ñ‚Ðµ Ð¸ Ð¾Ð±Ñ‰Ð°Ð¹Ñ‚ÐµÑÑŒ Ð¾Ð´Ð½Ð¾Ð²Ñ€ÐµÐ¼ÐµÐ½Ð½Ð¾',
-            senderHeader: 'ðŸ“¤ ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð¸Ñ‚ÑŒ Ñ„Ð°Ð¹Ð»',
-            sectionDesc: 'Ð’Ñ‹Ð±ÐµÑ€Ð¸Ñ‚Ðµ Ñ„Ð°Ð¹Ð» Ð¸ Ð¿Ð¾Ð´ÐµÐ»Ð¸Ñ‚ÐµÑÑŒ Ð±ÐµÐ·Ð¾Ð¿Ð°ÑÐ½Ð¾Ð¹ ÑÑÑ‹Ð»ÐºÐ¾Ð¹',
-            dropZone: 'ÐŸÐµÑ€ÐµÑ‚Ð°Ñ‰Ð¸Ñ‚Ðµ Ñ„Ð°Ð¹Ð» ÑÑŽÐ´Ð°',
-            or: 'Ð¸Ð»Ð¸ Ð½Ð°Ð¶Ð¼Ð¸Ñ‚Ðµ Ð´Ð»Ñ Ð²Ñ‹Ð±Ð¾Ñ€Ð°',
-            chooseFile: 'Ð’Ñ‹Ð±Ñ€Ð°Ñ‚ÑŒ Ñ„Ð°Ð¹Ð»',
-            deleteFile: 'âœ• Ð£Ð´Ð°Ð»Ð¸Ñ‚ÑŒ',
-            password: 'ðŸ” Ð—Ð°Ñ‰Ð¸Ñ‚Ð° Ð¿Ð°Ñ€Ð¾Ð»ÐµÐ¼ (Ð½ÐµÐ¾Ð±ÑÐ·Ð°Ñ‚ÐµÐ»ÑŒÐ½Ð¾)',
-            passwordPlaceholder: 'Ð’Ð²ÐµÐ´Ð¸Ñ‚Ðµ Ð¿Ð°Ñ€Ð¾Ð»ÑŒ Ð´Ð»Ñ Ð´Ð¾Ð¿Ð¾Ð»Ð½Ð¸Ñ‚ÐµÐ»ÑŒÐ½Ð¾Ð¹ Ð±ÐµÐ·Ð¾Ð¿Ð°ÑÐ½Ð¾ÑÑ‚Ð¸',
-            sendBtn: 'ðŸ“¤ ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð¸Ñ‚ÑŒ Ñ„Ð°Ð¹Ð»',
-            startChatBtn: 'ðŸ’¬ ÐÐ°Ñ‡Ð°Ñ‚ÑŒ Ñ‡Ð°Ñ‚',
-            passwordHint: 'Ð’Ð°Ñˆ Ð¿Ð°Ñ€Ð¾Ð»ÑŒ Ð½Ð¸ÐºÐ¾Ð³Ð´Ð° Ð½Ðµ Ð¿Ð¾ÐºÐ¸Ð´Ð°ÐµÑ‚ Ð²Ð°ÑˆÐµ ÑƒÑÑ‚Ñ€Ð¾Ð¹ÑÑ‚Ð²Ð¾',
-            shareTitle: 'ðŸ”— Ð¡ÑÑ‹Ð»ÐºÐ° Ð´Ð»Ñ Ð¾Ð±Ð¼ÐµÐ½Ð° ÑÐ¾Ð·Ð´Ð°Ð½Ð°',
-            linkInfo: 'ÐŸÐ¾Ð´ÐµÐ»Ð¸Ñ‚ÐµÑÑŒ ÑÑ‚Ð¾Ð¹ ÑÑÑ‹Ð»ÐºÐ¾Ð¹ Ñ Ð¿Ð¾Ð»ÑƒÑ‡Ð°Ñ‚ÐµÐ»ÐµÐ¼',
-            copyBtn: 'ðŸ“‹ ÐšÐ¾Ð¿Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ',
-            waiting: 'ðŸ“ ÐžÐ¶Ð¸Ð´Ð°Ð½Ð¸Ðµ Ð¿Ð¾Ð»ÑƒÑ‡Ð°Ñ‚ÐµÐ»Ñ...',
-            chatTitle: 'ðŸ’¬ Ð‘ÐµÐ·Ð¾Ð¿Ð°ÑÐ½Ñ‹Ð¹ Ñ‡Ð°Ñ‚',
-            chatPlaceholder: 'Ð’Ð²ÐµÐ´Ð¸Ñ‚Ðµ ÑÐ¾Ð¾Ð±Ñ‰ÐµÐ½Ð¸Ðµ...',
-            chatSend: 'ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð¸Ñ‚ÑŒ',
-            chatWaiting: 'ÐžÐ¶Ð¸Ð´Ð°Ð½Ð¸Ðµ...',
-            chatConnected: 'ÐŸÐ¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½',
-            chatP2PTitle: 'ðŸ’¬ Ð‘ÐµÐ·Ð¾Ð¿Ð°ÑÐ½Ñ‹Ð¹ P2P Ñ‡Ð°Ñ‚',
-            chatFilesTitle: 'ðŸ’¬ Ð§Ð°Ñ‚ + Ð¤Ð°Ð¹Ð»Ñ‹',
-            filesTitle: 'ðŸ“ Ð¤Ð°Ð¹Ð»Ñ‹',
-            addFile: 'ðŸ“Ž Ð”Ð¾Ð±Ð°Ð²Ð¸Ñ‚ÑŒ',
-            sendFiles: 'ðŸ“¤ ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð¸Ñ‚ÑŒ',
-            pending: 'ÐžÐ¶Ð¸Ð´Ð°Ð½Ð¸Ðµ',
-            receiving: 'ÐŸÐ¾Ð»ÑƒÑ‡ÐµÐ½Ð¸Ðµ...',
-            sent: 'ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½Ð¾',
-            download: 'ðŸ“¥ Ð¡ÐºÐ°Ñ‡Ð°Ñ‚ÑŒ',
-            receiverTitle: 'ðŸ“¥ ÐŸÐ¾Ð»ÑƒÑ‡ÐµÐ½Ð¸Ðµ Ñ„Ð°Ð¹Ð»Ð°',
-            receiverPassword: 'Ð¢Ñ€ÐµÐ±ÑƒÐµÑ‚ÑÑ Ð¿Ð°Ñ€Ð¾Ð»ÑŒ',
-            receiverPasswordPlaceholder: 'Ð’Ð²ÐµÐ´Ð¸Ñ‚Ðµ Ð¾Ð±Ñ‰Ð¸Ð¹ Ð¿Ð°Ñ€Ð¾Ð»ÑŒ',
-            unlockBtn: 'Ð Ð°Ð·Ð±Ð»Ð¾ÐºÐ¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ',
-            passwordHintReceiver: 'ÐŸÐ°Ñ€Ð¾Ð»ÑŒ Ð¾ÑÑ‚Ð°ÐµÑ‚ÑÑ Ð½Ð° ÑÑ‚Ð¾Ð¼ ÑƒÑÑ‚Ñ€Ð¾Ð¹ÑÑ‚Ð²Ðµ Ð¸ Ð¿Ñ€Ð¾Ð¸Ð·Ð²Ð¾Ð´Ð¸Ñ‚ ÐºÐ»ÑŽÑ‡ ÑˆÐ¸Ñ„Ñ€Ð¾Ð²Ð°Ð½Ð¸Ñ.',
-            receiveBtn: 'ðŸ“¥ ÐŸÐ¾Ð»ÑƒÑ‡Ð¸Ñ‚ÑŒ Ñ„Ð°Ð¹Ð»',
-            connecting: 'ÐŸÐ¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ...',
-            transferProgress: 'ÐŸÐµÑ€ÐµÐ´Ð°Ñ‡Ð° Ð² Ð¿Ñ€Ð¾Ñ†ÐµÑÑÐµ...',
-            complete: 'ÐŸÐµÑ€ÐµÐ´Ð°Ñ‡Ð° Ð·Ð°Ð²ÐµÑ€ÑˆÐµÐ½Ð°!',
-            integrity: 'Ð¦ÐµÐ»Ð¾ÑÑ‚Ð½Ð¾ÑÑ‚ÑŒ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÐµÐ½Ð° (SHA-256)',
-            newTransfer: 'ÐÐ¾Ð²Ð°Ñ Ð¿ÐµÑ€ÐµÐ´Ð°Ñ‡Ð°',
-            qrHint: 'Ð¡ÐºÐ°Ð½Ð¸Ñ€ÑƒÐ¹Ñ‚Ðµ Ð´Ð»Ñ Ð¿Ð¾Ð»ÑƒÑ‡ÐµÐ½Ð¸Ñ Ð½Ð° Ð¼Ð¾Ð±Ð¸Ð»ÑŒÐ½Ð¾Ð¼',
-            error: 'ÐžÑˆÐ¸Ð±ÐºÐ°',
-            retry: 'ÐŸÐ¾Ð²Ñ‚Ð¾Ñ€Ð¸Ñ‚ÑŒ',
-            footer: 'ðŸ” Ð¨Ð¸Ñ„Ñ€Ð¾Ð²Ð°Ð½Ð¸Ðµ AES-256-GCM | ðŸŒ WebRTC P2P | ðŸš« ÐÐµÑ‚ Ð´Ð°Ð½Ð½Ñ‹Ñ…, Ñ…Ñ€Ð°Ð½ÑÑ‰Ð¸Ñ…ÑÑ Ð½Ð° ÑÐµÑ€Ð²ÐµÑ€Ðµ | SecurePeer'
+            title: '🔒 SecurePeer',
+            subtitle: 'Сквозное зашифрованная передача файлов без промежуточного сервера',
+            modeTitle: '🚀 Создать сессию',
+            modeDesc: 'Выберите тип сессии, которую хотите начать',
+            modeFile: 'Передача файлов',
+            modeFileDesc: 'Отправляйте файлы безопасно',
+            modeChat: 'Безопасный чат',
+            modeChatDesc: 'Общайтесь в реальном времени, E2E шифрование',
+            modeBoth: 'Файлы + Чат',
+            modeBothDesc: 'Передавайте и общайтесь одновременно',
+            senderHeader: '📤 Отправить файл',
+            sectionDesc: 'Выберите файл и поделитесь безопасной ссылкой',
+            dropZone: 'Перетащите файл сюда',
+            or: 'или нажмите для выбора',
+            chooseFile: 'Выбрать файл',
+            deleteFile: '✕ Удалить',
+            password: '🔐 Защита паролем (необязательно)',
+            passwordPlaceholder: 'Введите пароль для дополнительной безопасности',
+            sendBtn: '📤 Отправить файл',
+            startChatBtn: '💬 Начать чат',
+            passwordHint: 'Ваш пароль никогда не покидает ваше устройство',
+            shareTitle: '🔗 Ссылка для обмена создана',
+            linkInfo: 'Поделитесь этой ссылкой с получателем',
+            copyBtn: '📋 Копировать',
+            waiting: '📍 Ожидание получателя...',
+            chatTitle: '💬 Безопасный чат',
+            chatPlaceholder: 'Введите сообщение...',
+            chatSend: 'Отправить',
+            chatWaiting: 'Ожидание...',
+            chatConnected: 'Подключен',
+            chatP2PTitle: '💬 Безопасный P2P чат',
+            chatFilesTitle: '💬 Чат + Файлы',
+            filesTitle: '📁 Файлы',
+            addFile: '📎 Добавить',
+            sendFiles: '📤 Отправить',
+            pending: 'Ожидание',
+            receiving: 'Получение...',
+            sent: 'Отправлено',
+            download: '📥 Скачать',
+            receiverTitle: '📥 Получение файла',
+            receiverPassword: 'Требуется пароль',
+            receiverPasswordPlaceholder: 'Введите общий пароль',
+            unlockBtn: 'Разблокировать',
+            passwordHintReceiver: 'Пароль остается на этом устройстве и производит ключ шифрования.',
+            receiveBtn: '📥 Получить файл',
+            connecting: 'Подключение...',
+            transferProgress: 'Передача в процессе...',
+            complete: 'Передача завершена!',
+            integrity: 'Целостность проверена (SHA-256)',
+            newTransfer: 'Новая передача',
+            qrHint: 'Сканируйте для получения на мобильном',
+            error: 'Ошибка',
+            retry: 'Повторить',
+            footer: '🔐 Шифрование AES-256-GCM | 🌐 WebRTC P2P | 🚫 Нет данных, хранящихся на сервере | SecurePeer'
         }
     };
     
     const t = translations[currentLanguage] || translations.fr;
     
-    // Mettre Ã  jour les Ã©lÃ©ments DOM (avec garde anti-null)
+    // Mettre à jour les éléments DOM (avec garde anti-null)
     const heroTitleEl = document.querySelector('.hero-content h1');
     if (heroTitleEl) heroTitleEl.textContent = t.title;
     const subtitleEl = document.querySelector('.subtitle');
     if (subtitleEl) subtitleEl.textContent = t.subtitle;
     
-    // Mettre Ã  jour le header sender - selon le mode de session actuel
+    // Mettre à jour le header sender - selon le mode de session actuel
     const senderHeader = document.querySelector('.sender-header h2');
     const sectionDesc = document.querySelector('.section-desc');
     if (sessionMode === 'chat') {
-        if (senderHeader) senderHeader.textContent = t.chatTitle || 'ðŸ’¬ Chat sÃ©curisÃ©';
-        if (sectionDesc) sectionDesc.textContent = t.modeChatDesc || 'Discutez en temps rÃ©el, chiffrÃ© E2E';
+        if (senderHeader) senderHeader.textContent = t.chatTitle || '💬 Chat sécurisé';
+        if (sectionDesc) sectionDesc.textContent = t.modeChatDesc || 'Discutez en temps réel, chiffré E2E';
     } else if (sessionMode === 'both') {
-        if (senderHeader) senderHeader.textContent = t.chatFilesTitle || 'ðŸ’¬ Chat + Fichiers';
-        if (sectionDesc) sectionDesc.textContent = t.modeBothDesc || 'TransfÃ©rez et discutez simultanÃ©ment';
+        if (senderHeader) senderHeader.textContent = t.chatFilesTitle || '💬 Chat + Fichiers';
+        if (sectionDesc) sectionDesc.textContent = t.modeBothDesc || 'Transférez et discutez simultanément';
     } else {
         if (senderHeader) senderHeader.textContent = t.senderHeader;
         if (sectionDesc) sectionDesc.textContent = t.sectionDesc;
@@ -4052,59 +4027,49 @@ function updateLanguage() {
 // Appliquer la langue au chargement
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('ðŸš€ [INIT] DOMContentLoaded - DÃ©marrage de l\'application');
+    console.log('🚀 [INIT] DOMContentLoaded - Démarrage de l\'application');
     
     // Charger les fingerprints connus
     loadKnownFingerprints();
     
-    // VÃ©rifier d'abord si on a un hash (lien de partage)
+    // Vérifier d'abord si on a un hash (lien de partage)
     const hash = window.location.hash.substring(1);
     const hasShareLink = hash && hash.includes('_');
     
-    // RÃ©cupÃ©rer la session stockÃ©e
+    // Récupérer la session stockée
     const restored = restoreSessionFromStorage();
     
-    console.log('ðŸ” [INIT] Hash URL:', hash || '(aucun)');
-    console.log('ðŸ” [INIT] Session stockÃ©e:', restored);
+    console.log('🔍 [INIT] Hash URL:', hash || '(aucun)');
+    console.log('🔍 [INIT] Session stockée:', restored);
     
-    // PRIORITÃ‰ 1: Lien de partage (receiver qui arrive ou revient)
+    // PRIORITÉ 1: Lien de partage (receiver qui arrive ou revient)
     if (hasShareLink) {
         // Extraire le roomId du hash
         const hashRoomId = hash.split('_')[0];
-        console.log('ðŸ”— [INIT] Lien de partage dÃ©tectÃ©, roomId:', hashRoomId);
+        console.log('🔗 [INIT] Lien de partage détecté, roomId:', hashRoomId);
         
-        // VÃ©rifier si c'est la mÃªme session que celle stockÃ©e
-        if (restored && restored.roomId === hashRoomId) {
-            // MÃªme room: vÃ©rifier si c'est le crÃ©ateur ou le receiver
-            if (restored.isCreator) {
-                console.log('ðŸ‘‘ [INIT] CrÃ©ateur qui rafraÃ®chit (avec hash URL), restauration...');
-                await restoreCreatorSession(restored);
-            } else if (restored.isReceiver) {
-                console.log('ðŸ”„ [INIT] Receiver qui rafraÃ®chit, restauration...');
-                await restoreReceiverSession(restored, hash);
-            } else {
-                console.log('ðŸ†• [INIT] Nouvelle visite via lien, flow receiver normal');
-                clearSessionStorage();
-                elements.landingPage.classList.add('hidden');
-                showPseudoThenConnect(hash);
-            }
+        // Vérifier si c'est la même session que celle stockée
+        if (restored && restored.roomId === hashRoomId && restored.isReceiver) {
+            console.log('🔄 [INIT] Même session receiver, restauration...');
+            // Restaurer la session receiver existante
+            await restoreReceiverSession(restored, hash);
         } else {
-            console.log('ðŸ†• [INIT] Nouvelle visite via lien, flow receiver normal');
-            // Effacer toute ancienne session pour Ã©viter les conflits
+            console.log('🆕 [INIT] Nouvelle visite via lien, flow receiver normal');
+            // Effacer toute ancienne session pour éviter les conflits
             clearSessionStorage();
             // Flow normal pour nouveau receiver
             elements.landingPage.classList.add('hidden');
             showPseudoThenConnect(hash);
         }
     }
-    // PRIORITÃ‰ 2: Session crÃ©ateur stockÃ©e (crÃ©ateur qui rafraÃ®chit)
+    // PRIORITÉ 2: Session créateur stockée (créateur qui rafraîchit)
     else if (restored && restored.roomId && !restored.isReceiver && restored.sessionMode) {
-        console.log('ðŸ‘‘ [INIT] Session crÃ©ateur dÃ©tectÃ©e, restauration...');
+        console.log('👑 [INIT] Session créateur détectée, restauration...');
         await restoreCreatorSession(restored);
     }
-    // PRIORITÃ‰ 3: Pas de session, afficher la landing page
+    // PRIORITÉ 3: Pas de session, afficher la landing page
     else {
-        console.log('ðŸ  [INIT] Pas de session, affichage landing page');
+        console.log('🏠 [INIT] Pas de session, affichage landing page');
         // Effacer toute session invalide
         if (restored) clearSessionStorage();
         setupPseudoSection();
@@ -4115,13 +4080,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateLanguage();
     setupThemeToggle();
     
-    // VÃ©rifier et afficher le popup Tor (premiÃ¨re utilisation)
+    // Vérifier et afficher le popup Tor (première utilisation)
     checkAndShowTorPopup();
     
     // Attacher les event listeners des boutons de fermeture de session (toujours, quel que soit le mode)
     setupCloseSessionButtons();
     
-    // Initialiser les fonctionnalitÃ©s du chat
+    // Initialiser les fonctionnalités du chat
     setupChatSearch();
     setupPinnedMessages();
     setupChatExport();
@@ -4140,7 +4105,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ===== FONCTIONS DE RESTAURATION DE SESSION =====
 
 async function restoreCreatorSession(restored) {
-    console.log('ðŸ‘‘ [RESTORE-CREATOR] DÃ©but restauration crÃ©ateur');
+    console.log('👑 [RESTORE-CREATOR] Début restauration créateur');
     
     // Restaurer les variables globales
     roomId = restored.roomId;
@@ -4161,24 +4126,24 @@ async function restoreCreatorSession(restored) {
     // Sauvegarder le pseudo
     localStorage.setItem('securepeer_pseudo', userPseudo);
     
-    console.log('   ðŸ“¦ roomId:', roomId);
-    console.log('   ðŸ“‹ mode:', sessionMode);
-    console.log('   ðŸ‘¤ pseudo:', userPseudo);
-    console.log('   ðŸ”‘ odId:', myOdId);
+    console.log('   📦 roomId:', roomId);
+    console.log('   📋 mode:', sessionMode);
+    console.log('   👤 pseudo:', userPseudo);
+    console.log('   🔑 odId:', myOdId);
     
-    // Cacher les sections non nÃ©cessaires
+    // Cacher les sections non nécessaires
     if (elements.landingPage) elements.landingPage.classList.add('hidden');
     if (elements.modeSelection) elements.modeSelection.classList.add('hidden');
     if (elements.pseudoSection) elements.pseudoSection.classList.add('hidden');
     
-    // Restaurer la clÃ© crypto depuis la session stockÃ©e (au lieu d'en gÃ©nÃ©rer une nouvelle)
+    // Restaurer la clé crypto depuis la session stockée (au lieu d'en générer une nouvelle)
     if (restored.cryptoKeyB64) {
         try {
             await importKeyFromBase64(restored.cryptoKeyB64);
-            console.log('ðŸ” [RESTORE-CREATOR] ClÃ© crypto RESTAURÃ‰E depuis localStorage');
+            console.log('🔐 [RESTORE-CREATOR] Clé crypto RESTAURÉE depuis localStorage');
         } catch (err) {
-            console.error('âŒ [RESTORE-CREATOR] Erreur import clÃ©:', err);
-            // Ne pas gÃ©nÃ©rer de nouvelle clÃ©, on utilisera ECDH
+            console.error('❌ [RESTORE-CREATOR] Erreur import clé:', err);
+            // Ne pas générer de nouvelle clé, on utilisera ECDH
         }
     }
     
@@ -4187,28 +4152,28 @@ async function restoreCreatorSession(restored) {
         try {
             const success = await importECDHKeyPair(restored.ecdhKeyPair);
             if (success) {
-                console.log('ðŸ” [RESTORE-CREATOR] Paire ECDH RESTAURÃ‰E depuis localStorage');
+                console.log('🔐 [RESTORE-CREATOR] Paire ECDH RESTAURÉE depuis localStorage');
             } else {
-                // GÃ©nÃ©rer une nouvelle paire ECDH
+                // Générer une nouvelle paire ECDH
                 await generateECDHKeyPair();
-                console.log('ðŸ” [RESTORE-CREATOR] Nouvelle paire ECDH gÃ©nÃ©rÃ©e (import Ã©chouÃ©)');
+                console.log('🔐 [RESTORE-CREATOR] Nouvelle paire ECDH générée (import échoué)');
             }
         } catch (err) {
-            console.error('âŒ [RESTORE-CREATOR] Erreur import ECDH:', err);
+            console.error('❌ [RESTORE-CREATOR] Erreur import ECDH:', err);
             await generateECDHKeyPair();
-            console.log('ðŸ” [RESTORE-CREATOR] Nouvelle paire ECDH gÃ©nÃ©rÃ©e (erreur)');
+            console.log('🔐 [RESTORE-CREATOR] Nouvelle paire ECDH générée (erreur)');
         }
     } else if (!usePassword && !restored.cryptoKeyB64) {
-        // Pas de clÃ© stockÃ©e et pas de mot de passe, gÃ©nÃ©rer ECDH
+        // Pas de clé stockée et pas de mot de passe, générer ECDH
         await generateECDHKeyPair();
-        console.log('ðŸ” [RESTORE-CREATOR] Nouvelle paire ECDH gÃ©nÃ©rÃ©e (pas de clÃ© stockÃ©e)');
+        console.log('🔐 [RESTORE-CREATOR] Nouvelle paire ECDH générée (pas de clé stockée)');
     }
     
-    // Restaurer ou rÃ©gÃ©nÃ©rer fileInfo selon le mode
+    // Restaurer ou régénérer fileInfo selon le mode
     if (restored.fileInfo) {
-        // Utiliser le fileInfo stockÃ©
+        // Utiliser le fileInfo stocké
         fileInfo = restored.fileInfo;
-        console.log('   ðŸ“„ fileInfo restaurÃ©:', fileInfo.name);
+        console.log('   📄 fileInfo restauré:', fileInfo.name);
     } else if (sessionMode === 'chat' || sessionMode === 'both') {
         fileInfo = {
             name: sessionMode === 'chat' ? 'Chat Session' : 'Chat + Files Session',
@@ -4231,7 +4196,7 @@ async function restoreCreatorSession(restored) {
         fileInfo.passwordIterations = passwordIterations;
     }
     
-    // Afficher l'interface crÃ©ateur
+    // Afficher l'interface créateur
     showCreatorInterface(sessionMode);
     
     // Afficher la section lien avec statut "en attente"
@@ -4241,14 +4206,14 @@ async function restoreCreatorSession(restored) {
     }
     
     // Se reconnecter au WebSocket
-    console.log('ðŸŒ [RESTORE-CREATOR] Connexion WebSocket...');
+    console.log('🌐 [RESTORE-CREATOR] Connexion WebSocket...');
     connectWebSocket();
     
-    showToast('Session crÃ©ateur restaurÃ©e');
+    showToast('Session créateur restaurée');
 }
 
 async function restoreReceiverSession(restored, hash) {
-    console.log('ðŸ“¥ [RESTORE-RECEIVER] DÃ©but restauration receiver');
+    console.log('📥 [RESTORE-RECEIVER] Début restauration receiver');
     
     // Restaurer les variables globales
     roomId = restored.roomId;
@@ -4268,70 +4233,50 @@ async function restoreReceiverSession(restored, hash) {
         localStorage.setItem('securepeer_odid', myOdId);
     }
     
-    console.log('   ðŸ“¦ roomId:', roomId);
-    console.log('   ðŸ“‹ mode:', sessionMode);
-    console.log('   ðŸ‘¤ pseudo:', userPseudo);
-    console.log('   ðŸ”‘ odId:', myOdId);
-    console.log('   ðŸ” usePassword:', usePassword);
-    console.log('   ðŸ” cryptoKeyB64 stockÃ©:', !!restored.cryptoKeyB64);
+    console.log('   📦 roomId:', roomId);
+    console.log('   📋 mode:', sessionMode);
+    console.log('   👤 pseudo:', userPseudo);
+    console.log('   🔑 odId:', myOdId);
+    console.log('   🔐 usePassword:', usePassword);
+    console.log('   🔐 cryptoKeyB64 stocké:', !!restored.cryptoKeyB64);
     
-    // Cacher les sections non nÃ©cessaires
+    // Cacher les sections non nécessaires
     if (elements.landingPage) elements.landingPage.classList.add('hidden');
     if (elements.modeSelection) elements.modeSelection.classList.add('hidden');
     if (elements.pseudoSection) elements.pseudoSection.classList.add('hidden');
     
-    // Interface unifiÃ©e - utiliser sender-section pour tout le monde
-    elements.senderSection.classList.remove('hidden');
-    elements.dropZone.classList.add('hidden');
-    elements.linkSection.classList.remove('hidden');
-    // Cacher les Ã©lÃ©ments crÃ©ateur-only
-    if (elements.shareLink) elements.shareLink.parentElement.classList.add('hidden');
-    if (document.getElementById('qrcode-container')) document.getElementById('qrcode-container').classList.add('hidden');
+    // Afficher la section receiver
+    elements.receiverSection.classList.remove('hidden');
     
-    // Adapter le header selon le mode
-    const header = document.querySelector('#sender-section .sender-header h2');
-    const desc = document.querySelector('#sender-section .section-desc');
-    if (sessionMode === 'chat') {
-        if (header) header.textContent = 'ðŸ’¬ Chat sÃ©curisÃ©';
-        if (desc) desc.textContent = 'Reconnexion en cours...';
-    } else if (sessionMode === 'both') {
-        if (header) header.textContent = 'ðŸ’¬ Chat + Fichiers';
-        if (desc) desc.textContent = 'Reconnexion en cours...';
-    } else {
-        if (header) header.textContent = 'ðŸ“¥ Recevoir un fichier';
-        if (desc) desc.textContent = 'Reconnexion en cours...';
-    }
-    
-    // Afficher le badge "Session Ã©phÃ©mÃ¨re" dans le header
+    // Afficher le badge "Session éphémère" dans le header
     showEphemeralBadge();
     
-    // GÃ©rer la clÃ© crypto
+    // Gérer la clé crypto
     if (usePassword && !restored.cryptoKeyB64) {
-        // Session protÃ©gÃ©e par mot de passe ET pas de clÃ© stockÃ©e - redemander le mot de passe
-        console.log('ðŸ” [RESTORE-RECEIVER] Session protÃ©gÃ©e, redemander mot de passe');
-        elements.linkStatus.textContent = 'Entrez le mot de passe pour reprendre la session';
-        elements.passwordBlock.classList.remove('hidden');
-        elements.sendFileBtn.textContent = 'ðŸ”“ DÃ©verrouiller';
-        elements.sendFileBtn.onclick = async () => {
+        // Session protégée par mot de passe ET pas de clé stockée - redemander le mot de passe
+        console.log('🔐 [RESTORE-RECEIVER] Session protégée, redemander mot de passe');
+        elements.receiverStatus.textContent = 'Entrez le mot de passe pour reprendre la session';
+        elements.receiverPasswordBlock.classList.remove('hidden');
+        elements.receiverPasswordApply.onclick = async () => {
             await applyReceiverPassword();
-            // AprÃ¨s application du mot de passe, se reconnecter
+            // Après application du mot de passe, se reconnecter
             if (cryptoKey) {
-                console.log('ðŸŒ [RESTORE-RECEIVER] Mot de passe OK, connexion WebSocket...');
+                console.log('🌐 [RESTORE-RECEIVER] Mot de passe OK, connexion WebSocket...');
                 connectWebSocket();
             }
         };
         showToast('Entrez le mot de passe pour reprendre votre session');
-        return; // Ne pas continuer tant que le mot de passe n'est pas entrÃ©
+        return; // Ne pas continuer tant que le mot de passe n'est pas entré
     }
     
-    // Restaurer la clÃ© depuis la session stockÃ©e (prioritÃ©) ou depuis le hash (fallback)
+    // Restaurer la clé depuis la session stockée (priorité) ou depuis le hash (fallback)
     if (restored.cryptoKeyB64) {
         try {
             await importKeyFromBase64(restored.cryptoKeyB64);
-            console.log('ðŸ” [RESTORE-RECEIVER] ClÃ© crypto RESTAURÃ‰E depuis localStorage');
+            console.log('🔐 [RESTORE-RECEIVER] Clé crypto RESTAURÉE depuis localStorage');
         } catch (err) {
-            console.error('âŒ [RESTORE-RECEIVER] Erreur import clÃ© stockÃ©e:', err);
-            // La clÃ© sera dÃ©rivÃ©e via ECDH aprÃ¨s connexion
+            console.error('❌ [RESTORE-RECEIVER] Erreur import clé stockée:', err);
+            // La clé sera dérivée via ECDH après connexion
         }
     }
     
@@ -4340,49 +4285,55 @@ async function restoreReceiverSession(restored, hash) {
         try {
             const success = await importECDHKeyPair(restored.ecdhKeyPair);
             if (success) {
-                console.log('ðŸ” [RESTORE-RECEIVER] Paire ECDH RESTAURÃ‰E depuis localStorage');
+                console.log('🔐 [RESTORE-RECEIVER] Paire ECDH RESTAURÉE depuis localStorage');
             } else {
-                // GÃ©nÃ©rer une nouvelle paire ECDH
+                // Générer une nouvelle paire ECDH
                 await generateECDHKeyPair();
-                console.log('ðŸ” [RESTORE-RECEIVER] Nouvelle paire ECDH gÃ©nÃ©rÃ©e');
+                console.log('🔐 [RESTORE-RECEIVER] Nouvelle paire ECDH générée');
             }
         } catch (err) {
-            console.error('âŒ [RESTORE-RECEIVER] Erreur import ECDH:', err);
+            console.error('❌ [RESTORE-RECEIVER] Erreur import ECDH:', err);
             await generateECDHKeyPair();
         }
     } else if (!usePassword && !restored.cryptoKeyB64) {
-        // Pas de clÃ© et pas de mot de passe, gÃ©nÃ©rer ECDH pour le nouvel Ã©change
+        // Pas de clé et pas de mot de passe, générer ECDH pour le nouvel échange
         await generateECDHKeyPair();
-        console.log('ðŸ” [RESTORE-RECEIVER] Nouvelle paire ECDH gÃ©nÃ©rÃ©e (pas de clÃ© stockÃ©e)');
+        console.log('🔐 [RESTORE-RECEIVER] Nouvelle paire ECDH générée (pas de clé stockée)');
     }
     
-    // Afficher le chat/fichiers selon le mode (interface unifiÃ©e)
+    // Afficher le chat/fichiers selon le mode
     if (sessionMode === 'chat' || sessionMode === 'both') {
-        elements.chatSection.classList.remove('hidden');
+        elements.receiverChatSection.classList.remove('hidden');
         if (sessionMode === 'both') {
-            elements.bothFileSection.classList.remove('hidden');
+            elements.receiverBothFileSection.classList.remove('hidden');
         }
     }
     
-    // Mettre Ã  jour le statut
-    elements.linkStatus.textContent = 'Reconnexion en cours...';
+    // Afficher les infos du fichier si disponibles
+    if (fileInfo) {
+        if (elements.incomingFileName) elements.incomingFileName.textContent = fileInfo.name || 'Fichier';
+        if (elements.incomingFileSize) elements.incomingFileSize.textContent = formatFileSize(fileInfo.size || 0);
+    }
+    
+    // Mettre à jour le statut
+    elements.receiverStatus.textContent = 'Reconnexion en cours...';
     
     // Setup chat et fichiers
     setupChat();
     setupBothModeFiles();
     
     // Se reconnecter au WebSocket
-    console.log('ðŸŒ [RESTORE-RECEIVER] Connexion WebSocket...');
+    console.log('🌐 [RESTORE-RECEIVER] Connexion WebSocket...');
     connectWebSocket();
     
-    showToast('Session receiver restaurÃ©e');
+    showToast('Session receiver restaurée');
 }
 
 function setupThemeToggle() {
     const themeToggle = document.getElementById('theme-toggle');
     const currentTheme = localStorage.getItem('theme') || 'light';
     
-    // Appliquer le thÃ¨me initial
+    // Appliquer le thème initial
     if (currentTheme === 'dark') {
         document.documentElement.setAttribute('data-theme', 'dark');
     }
@@ -4395,37 +4346,37 @@ function setupThemeToggle() {
             document.documentElement.setAttribute('data-theme', newTheme);
             localStorage.setItem('theme', newTheme);
             
-            console.log('ðŸŒ“ ThÃ¨me changÃ© en:', newTheme);
+            console.log('🌓 Thème changé en:', newTheme);
         });
     }
 }
 
-// ===== SÃ‰LECTION DU PSEUDO =====
+// ===== SÉLECTION DU PSEUDO =====
 function setupPseudoSection() {
     // Event listener pour le bouton confirmer pseudo
     if (elements.pseudoConfirmBtn) {
         elements.pseudoConfirmBtn.addEventListener('click', () => {
             const pseudoValue = elements.pseudoInputMain.value.trim();
             if (!pseudoValue || pseudoValue.length < 3) {
-                showToast('âš ï¸ Le pseudo doit faire au moins 3 caractÃ¨res');
+                showToast('⚠️ Le pseudo doit faire au moins 3 caractères');
                 return;
             }
             if (pseudoValue.length > 20) {
-                showToast('âš ï¸ Le pseudo doit faire maximum 20 caractÃ¨res');
+                showToast('⚠️ Le pseudo doit faire maximum 20 caractères');
                 return;
             }
-            // Sauvegarder le pseudo UNIQUEMENT si pas dÃ©jÃ  dÃ©fini
+            // Sauvegarder le pseudo UNIQUEMENT si pas déjà défini
             if (!userPseudo || userPseudo !== pseudoValue) {
                 userPseudo = pseudoValue;
                 localStorage.setItem('securepeer_pseudo', pseudoValue);
-                console.log('âœ… Pseudo dÃ©fini:', userPseudo);
+                console.log('✅ Pseudo défini:', userPseudo);
             }
             // Cacher la section pseudo et continuer
             elements.pseudoSection.classList.add('hidden');
             continueInit();
         });
     }
-    // Permettre EntrÃ©e pour confirmer
+    // Permettre Entrée pour confirmer
     if (elements.pseudoInputMain) {
         elements.pseudoInputMain.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -4435,14 +4386,14 @@ function setupPseudoSection() {
     }
 }
 
-// Demander le pseudo puis afficher l'interface crÃ©ateur
+// Demander le pseudo puis afficher l'interface créateur
 function showPseudoForCreator(mode) {
-    console.log('ðŸŽ­ [PSEUDO] showPseudoForCreator appelÃ© pour mode:', mode);
-    // Toujours demander le pseudo (prÃ©-remplir si sauvegardÃ©)
+    console.log('🎭 [PSEUDO] showPseudoForCreator appelé pour mode:', mode);
+    // Toujours demander le pseudo (pré-remplir si sauvegardé)
     const savedPseudo = localStorage.getItem('securepeer_pseudo');
     // Afficher la section pseudo
     elements.pseudoSection.classList.remove('hidden');
-    // PrÃ©-remplir si un pseudo est sauvegardÃ©
+    // Pré-remplir si un pseudo est sauvegardé
     if (savedPseudo) {
         elements.pseudoInputMain.value = savedPseudo;
     } else {
@@ -4450,35 +4401,35 @@ function showPseudoForCreator(mode) {
     }
     elements.pseudoInputMain?.focus();
     
-    // CrÃ©er un nouveau bouton pour Ã©viter les conflits d'event listeners
+    // Créer un nouveau bouton pour éviter les conflits d'event listeners
     const oldBtn = elements.pseudoConfirmBtn;
     const newBtn = oldBtn.cloneNode(true);
     oldBtn.parentNode.replaceChild(newBtn, oldBtn);
     elements.pseudoConfirmBtn = newBtn;
     
-    // Attacher le handler spÃ©cifique pour le crÃ©ateur
+    // Attacher le handler spécifique pour le créateur
     newBtn.addEventListener('click', () => {
         const pseudoValue = elements.pseudoInputMain.value.trim();
         if (!pseudoValue || pseudoValue.length < 3) {
-            showToast('âš ï¸ Le pseudo doit faire au moins 3 caractÃ¨res');
+            showToast('⚠️ Le pseudo doit faire au moins 3 caractères');
             return;
         }
         if (pseudoValue.length > 20) {
-            showToast('âš ï¸ Le pseudo doit faire maximum 20 caractÃ¨res');
+            showToast('⚠️ Le pseudo doit faire maximum 20 caractères');
             return;
         }
         // Sauvegarder le pseudo
         userPseudo = pseudoValue;
         localStorage.setItem('securepeer_pseudo', pseudoValue);
-        console.log('âœ… [PSEUDO] Pseudo dÃ©fini:', userPseudo);
-        // Cacher la section pseudo et afficher l'interface crÃ©ateur
+        console.log('✅ [PSEUDO] Pseudo défini:', userPseudo);
+        // Cacher la section pseudo et afficher l'interface créateur
         elements.pseudoSection.classList.add('hidden');
-        console.log('ðŸŽ¨ [PSEUDO] Appel de showCreatorInterface pour mode:', mode);
+        console.log('🎨 [PSEUDO] Appel de showCreatorInterface pour mode:', mode);
         showCreatorInterface(mode);
     });
 }
 
-// ===== SÃ‰LECTION DU MODE =====
+// ===== SÉLECTION DU MODE =====
 function setupModeSelection() {
     const modeCards = document.querySelectorAll('.mode-card');
     
@@ -4492,17 +4443,17 @@ function setupModeSelection() {
                 saveSessionToStorage();
             }
             
-            // Marquer la carte sÃ©lectionnÃ©e
+            // Marquer la carte sélectionnée
             modeCards.forEach(c => c.classList.remove('selected'));
             card.classList.add('selected');
             
-            // Cacher la sÃ©lection de mode, demander le pseudo
+            // Cacher la sélection de mode, demander le pseudo
             elements.modeSelection.classList.add('hidden');
             
             // Demander le pseudo avant de continuer
             showPseudoForCreator(mode);
             
-            console.log('ðŸ“‹ Mode sÃ©lectionnÃ©:', mode);
+            console.log('📋 Mode sélectionné:', mode);
         });
     });
 }
@@ -4533,7 +4484,7 @@ function setupChat() {
 }
 
 function getActiveChatElements(isReceiverSide) {
-    // Interface unifiÃ©e - toujours les mÃªmes Ã©lÃ©ments
+    // Interface unifiée - toujours les mêmes éléments
     return {
         inputEl: elements.chatInput,
         messagesEl: elements.chatMessages,
@@ -4557,21 +4508,21 @@ function setReplyPreview(targetId, isReceiverSide) {
     const target = findMessageById(targetId);
     if (!inputEl || !target) return;
     
-    // Annuler l'Ã©dition si active
+    // Annuler l'édition si active
     editingMessageId = null;
     document.querySelectorAll('.editing-indicator').forEach(ind => ind.remove());
     
-    // Ajouter un indicateur visuel de rÃ©ponse
+    // Ajouter un indicateur visuel de réponse
     const replyIndicator = document.createElement('div');
     replyIndicator.className = 'reply-indicator';
     replyIndicator.innerHTML = `
         <div class="reply-preview">
-            <span class="reply-icon">â†©</span>
+            <span class="reply-icon">↩</span>
             <div class="reply-info">
                 <strong>${escapeHtml(target.pseudo || 'Message')}</strong>
-                <span>${escapeHtml(target.text.slice(0, 50))}${target.text.length > 50 ? 'â€¦' : ''}</span>
+                <span>${escapeHtml(target.text.slice(0, 50))}${target.text.length > 50 ? '…' : ''}</span>
             </div>
-            <button class="cancel-reply-btn" onclick="cancelReply()">âœ•</button>
+            <button class="cancel-reply-btn" onclick="cancelReply()">✕</button>
         </div>
     `;
     
@@ -4607,18 +4558,18 @@ async function sendChatMessage(isReceiverSide) {
     if (!text || !hasConnectedPeer) return;
     
     try {
-        // Mode Ã©dition : envoyer un patch
+        // Mode édition : envoyer un patch
         if (editingMessageId) {
             const editPayload = {
                 type: 'chat-edit',
                 messageId: editingMessageId,
-                text: text, // Envoi en clair temporairement pour l'Ã©dition
+                text: text, // Envoi en clair temporairement pour l'édition
                 senderPseudo: userPseudo,
                 timestamp: Date.now()
             };
             broadcastToAllPeers(editPayload);
 
-            // Mise Ã  jour locale
+            // Mise à jour locale
             const target = findMessageById(editingMessageId);
             if (target) {
                 target.text = text;
@@ -4627,7 +4578,7 @@ async function sendChatMessage(isReceiverSide) {
             inputEl.value = '';
             clearReplyEditState(isReceiverSide);
             renderChatMessages(messagesEl);
-            console.log('âœï¸ Message Ã©ditÃ©');
+            console.log('✏️ Message édité');
             return;
         }
 
@@ -4637,7 +4588,7 @@ async function sendChatMessage(isReceiverSide) {
             type: 'chat-message',
             messageId,
             replyToId: replyToMessageId,
-            text: text, // Le texte sera chiffrÃ© par Double Ratchet
+            text: text, // Le texte sera chiffré par Double Ratchet
             senderPseudo: userPseudo,
             timestamp: now,
             ephemeralDuration: ephemeralMode ? ephemeralDuration : null
@@ -4662,29 +4613,29 @@ async function sendChatMessage(isReceiverSide) {
         clearReplyEditState(isReceiverSide);
         renderChatMessages(messagesEl);
         
-        // Programmer la suppression si Ã©phÃ©mÃ¨re
+        // Programmer la suppression si éphémère
         if (ephemeralMode) {
             scheduleMessageDeletion(messageId, ephemeralDuration);
         }
         
-        console.log('ðŸ’¬ Message envoyÃ© Ã ', peers.size, 'peer(s)');
+        console.log('💬 Message envoyé à', peers.size, 'peer(s)');
     } catch (err) {
-        console.error('âŒ Erreur envoi message:', err);
+        console.error('❌ Erreur envoi message:', err);
         showToast('Erreur lors de l\'envoi du message');
     }
 }
 
 async function handleChatMessage(data, fromOdId) {
     try {
-        // Le message est dÃ©jÃ  dÃ©chiffrÃ© si passÃ© par handleDoubleRatchetMessage
+        // Le message est déjà déchiffré si passé par handleDoubleRatchetMessage
         // Sinon c'est un ancien format avec iv/ciphertext
         let text;
         
         if (data.text) {
-            // Nouveau format: texte dÃ©jÃ  dÃ©chiffrÃ© par Double Ratchet
+            // Nouveau format: texte déjà déchiffré par Double Ratchet
             text = data.text;
         } else if (data.iv && data.ciphertext) {
-            // Ancien format: dÃ©chiffrer avec AES-GCM (compatibilitÃ©)
+            // Ancien format: déchiffrer avec AES-GCM (compatibilité)
             const iv = fromBase64(data.iv);
             const ciphertext = fromBase64(data.ciphertext);
             
@@ -4697,13 +4648,13 @@ async function handleChatMessage(data, fromOdId) {
             const decoder = new TextDecoder();
             text = decoder.decode(decrypted);
         } else {
-            console.error('âŒ Format de message invalide');
+            console.error('❌ Format de message invalide');
             return;
         }
         
-        // RÃ©cupÃ©rer le pseudo de l'expÃ©diteur
+        // Récupérer le pseudo de l'expéditeur
         const senderPseudo = data.senderPseudo || participants.get(fromOdId)?.pseudo || 'Anonyme';
-        const messagesEl = elements.chatMessages;
+        const messagesEl = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
         
         const messageId = data.messageId || generateMessageId();
         const now = Date.now();
@@ -4724,22 +4675,22 @@ async function handleChatMessage(data, fromOdId) {
         });
         renderChatMessages(messagesEl);
         
-        // Programmer la suppression si Ã©phÃ©mÃ¨re
+        // Programmer la suppression si éphémère
         if (ephemeralDur) {
             scheduleMessageDeletion(messageId, ephemeralDur);
             scheduleMessageDeletion(messageId, ephemeralDuration);
         }
         
-        console.log('ðŸ’¬ Message reÃ§u de', senderPseudo);
+        console.log('💬 Message reçu de', senderPseudo);
     } catch (err) {
-        console.error('âŒ Erreur traitement message:', err);
+        console.error('❌ Erreur traitement message:', err);
     }
 }
 
 function renderChatMessages(containerEl) {
     if (!containerEl) return;
     containerEl.innerHTML = '';
-    const reactionList = ['ðŸ‘', 'â¤ï¸', 'ðŸ˜‚', 'ðŸ˜®', 'ðŸ˜¢', 'ðŸ‘'];
+    const reactionList = ['👍', '❤️', '😂', '😮', '😢', '👏'];
 
     // Filtrer les messages selon la recherche
     let filteredMessages = chatMessages;
@@ -4755,7 +4706,7 @@ function renderChatMessages(containerEl) {
                 if (msgPseudo !== chatSearchUserFilter) return false;
             }
             
-            // Filtre par mot-clÃ©
+            // Filtre par mot-clé
             if (chatSearchQuery) {
                 const text = (msg.text || '').toLowerCase();
                 if (!text.includes(chatSearchQuery.toLowerCase())) return false;
@@ -4766,7 +4717,7 @@ function renderChatMessages(containerEl) {
         });
     }
     
-    // Mettre Ã  jour le compteur de rÃ©sultats
+    // Mettre à jour le compteur de résultats
     updateSearchResultsCount(searchMatchCount);
 
     filteredMessages.forEach(msg => {
@@ -4774,7 +4725,7 @@ function renderChatMessages(containerEl) {
         msgWrapper.className = `message-wrapper ${msg.isSent ? 'sent' : 'received'}`;
         msgWrapper.dataset.messageId = msg.id;
         
-        // Badge Ã©pinglÃ©
+        // Badge épinglé
         if (pinnedMessageIds.has(msg.id)) {
             msgWrapper.classList.add('pinned');
         }
@@ -4782,7 +4733,7 @@ function renderChatMessages(containerEl) {
         const msgBubble = document.createElement('div');
         msgBubble.className = 'message-bubble';
 
-        // Pseudo (pour messages reÃ§us en groupe)
+        // Pseudo (pour messages reçus en groupe)
         if (!msg.isSent && msg.pseudo && participants.size > 1) {
             const pseudoEl = document.createElement('div');
             pseudoEl.className = 'message-author';
@@ -4790,7 +4741,7 @@ function renderChatMessages(containerEl) {
             msgBubble.appendChild(pseudoEl);
         }
 
-        // RÃ©ponse/quote avec style amÃ©liorÃ©
+        // Réponse/quote avec style amélioré
         if (msg.replyToId && !msg.deleted) {
             const target = findMessageById(msg.replyToId);
             if (target) {
@@ -4799,7 +4750,7 @@ function renderChatMessages(containerEl) {
                 
                 const replyIcon = document.createElement('span');
                 replyIcon.className = 'reply-icon';
-                replyIcon.textContent = 'â†©';
+                replyIcon.textContent = '↩';
                 
                 const replyContent = document.createElement('div');
                 replyContent.className = 'reply-content';
@@ -4811,7 +4762,7 @@ function renderChatMessages(containerEl) {
                 const replyText = document.createElement('div');
                 replyText.className = 'reply-text';
                 const truncated = target.text.slice(0, 60);
-                replyText.textContent = truncated + (target.text.length > 60 ? 'â€¦' : '');
+                replyText.textContent = truncated + (target.text.length > 60 ? '…' : '');
                 
                 replyContent.appendChild(replyAuthor);
                 replyContent.appendChild(replyText);
@@ -4827,7 +4778,7 @@ function renderChatMessages(containerEl) {
         
         if (msg.deleted) {
             contentEl.classList.add('deleted');
-            contentEl.innerHTML = '<em>ðŸ—‘ï¸ Message supprimÃ©</em>';
+            contentEl.innerHTML = '<em>🗑️ Message supprimé</em>';
         } else {
             // Mettre en surbrillance les termes de recherche
             if (chatSearchQuery && msg.text) {
@@ -4836,18 +4787,18 @@ function renderChatMessages(containerEl) {
                 contentEl.textContent = msg.text;
             }
             
-            // Indicateur d'Ã©dition discret
+            // Indicateur d'édition discret
             if (msg.edited) {
                 const editBadge = document.createElement('span');
                 editBadge.className = 'edit-badge';
-                editBadge.textContent = 'modifiÃ©';
-                editBadge.title = 'Ce message a Ã©tÃ© modifiÃ©';
+                editBadge.textContent = 'modifié';
+                editBadge.title = 'Ce message a été modifié';
                 contentEl.appendChild(editBadge);
             }
         }
         msgBubble.appendChild(contentEl);
 
-        // RÃ©actions (affichÃ©es dans la bulle)
+        // Réactions (affichées dans la bulle)
         if (!msg.deleted) {
             const existingReactions = Object.entries(msg.reactions || {}).filter(([_, users]) => users.length > 0);
             if (existingReactions.length > 0) {
@@ -4867,11 +4818,11 @@ function renderChatMessages(containerEl) {
                     reactionsContainer.appendChild(reactionBtn);
                 });
                 
-                // Bouton + pour ajouter une nouvelle rÃ©action
+                // Bouton + pour ajouter une nouvelle réaction
                 const addReactionBtn = document.createElement('button');
                 addReactionBtn.className = 'reaction-pill add-reaction';
-                addReactionBtn.innerHTML = 'âž•';
-                addReactionBtn.title = 'Ajouter une rÃ©action';
+                addReactionBtn.innerHTML = '➕';
+                addReactionBtn.title = 'Ajouter une réaction';
                 addReactionBtn.onclick = (e) => {
                     e.stopPropagation();
                     toggleReactionPicker(msg.id, msgWrapper);
@@ -4882,7 +4833,7 @@ function renderChatMessages(containerEl) {
             }
         }
 
-        // Footer avec timestamp et countdown Ã©phÃ©mÃ¨re
+        // Footer avec timestamp et countdown éphémère
         const footer = document.createElement('div');
         footer.className = 'message-meta';
         
@@ -4891,7 +4842,7 @@ function renderChatMessages(containerEl) {
         timeEl.textContent = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         footer.appendChild(timeEl);
         
-        // Countdown Ã©phÃ©mÃ¨re si activÃ© et message pas encore expirÃ©
+        // Countdown éphémère si activé et message pas encore expiré
         if (msg.ephemeralExpiry && !msg.deleted) {
             const countdownEl = document.createElement('span');
             countdownEl.className = 'ephemeral-countdown';
@@ -4901,7 +4852,7 @@ function renderChatMessages(containerEl) {
             countdownEl.style.fontWeight = 'bold';
             footer.appendChild(countdownEl);
             
-            // Mettre Ã  jour le countdown immÃ©diatement
+            // Mettre à jour le countdown immédiatement
             updateEphemeralCountdown(msg.id, msg.ephemeralExpiry, countdownEl);
         }
         
@@ -4913,45 +4864,45 @@ function renderChatMessages(containerEl) {
             const actionsMenu = document.createElement('div');
             actionsMenu.className = 'message-actions-menu';
 
-            // Bouton rÃ©action (ouvre le picker)
+            // Bouton réaction (ouvre le picker)
             const reactionBtn = document.createElement('button');
             reactionBtn.className = 'action-btn reaction-btn';
-            reactionBtn.innerHTML = 'âž•';
-            reactionBtn.title = 'Ajouter une rÃ©action';
+            reactionBtn.innerHTML = '➕';
+            reactionBtn.title = 'Ajouter une réaction';
             reactionBtn.onclick = (e) => {
                 e.stopPropagation();
                 toggleReactionPicker(msg.id, msgWrapper);
             };
             actionsMenu.appendChild(reactionBtn);
 
-            // Bouton rÃ©pondre
+            // Bouton répondre
             const replyBtn = document.createElement('button');
             replyBtn.className = 'action-btn reply-btn';
-            replyBtn.innerHTML = 'â†©';
-            replyBtn.title = 'RÃ©pondre';
+            replyBtn.innerHTML = '↩';
+            replyBtn.title = 'Répondre';
             replyBtn.onclick = () => setReplyPreview(msg.id, isReceiver);
             actionsMenu.appendChild(replyBtn);
             
-            // Bouton Ã©pingler
+            // Bouton épingler
             const pinBtn = document.createElement('button');
             pinBtn.className = 'action-btn pin-btn';
-            pinBtn.innerHTML = pinnedMessageIds.has(msg.id) ? 'ðŸ“Œ' : 'ðŸ“';
-            pinBtn.title = pinnedMessageIds.has(msg.id) ? 'DÃ©sÃ©pingler' : 'Ã‰pingler';
+            pinBtn.innerHTML = pinnedMessageIds.has(msg.id) ? '📌' : '📍';
+            pinBtn.title = pinnedMessageIds.has(msg.id) ? 'Désépingler' : 'Épingler';
             pinBtn.onclick = () => togglePinMessage(msg.id);
             actionsMenu.appendChild(pinBtn);
 
-            // Boutons Ã©diter/supprimer (uniquement pour mes messages)
+            // Boutons éditer/supprimer (uniquement pour mes messages)
             if (msg.isSent) {
                 const editBtn = document.createElement('button');
                 editBtn.className = 'action-btn edit-btn';
-                editBtn.innerHTML = 'âœï¸';
+                editBtn.innerHTML = '✏️';
                 editBtn.title = 'Modifier';
                 editBtn.onclick = () => startEditingMessage(msg.id);
                 actionsMenu.appendChild(editBtn);
 
                 const deleteBtn = document.createElement('button');
                 deleteBtn.className = 'action-btn delete-btn';
-                deleteBtn.innerHTML = 'ðŸ—‘ï¸';
+                deleteBtn.innerHTML = '🗑️';
                 deleteBtn.title = 'Supprimer';
                 deleteBtn.onclick = () => {
                     if (confirm('Supprimer ce message ?')) {
@@ -4986,7 +4937,7 @@ function toggleQuickReaction(messageId, emoji) {
         action: already ? 'remove' : 'add'
     });
 
-    const container = elements.chatMessages;
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
     renderChatMessages(container);
 }
 
@@ -4994,7 +4945,7 @@ function toggleReactionPicker(messageId, msgWrapper) {
     // Fermer tout picker ouvert
     document.querySelectorAll('.reaction-picker-popup').forEach(p => p.remove());
     
-    const reactionList = ['ðŸ‘', 'â¤ï¸', 'ðŸ˜‚', 'ðŸ˜®', 'ðŸ˜¢', 'ðŸ‘', 'ðŸ”¥', 'ðŸŽ‰'];
+    const reactionList = ['👍', '❤️', '😂', '😮', '😢', '👏', '🔥', '🎉'];
     
     const picker = document.createElement('div');
     picker.className = 'reaction-picker-popup';
@@ -5011,18 +4962,18 @@ function toggleReactionPicker(messageId, msgWrapper) {
         picker.appendChild(btn);
     });
     
-    // Ajouter au body pour Ã©viter les problÃ¨mes de dÃ©bordement
+    // Ajouter au body pour éviter les problèmes de débordement
     document.body.appendChild(picker);
     
-    // Positionner le picker prÃ¨s du message
+    // Positionner le picker près du message
     const wrapperRect = msgWrapper.getBoundingClientRect();
     const pickerWidth = 280; // Largeur approximative du picker
     const pickerHeight = 50; // Hauteur approximative
     
-    // Position horizontale: centrÃ© par rapport au message
+    // Position horizontale: centré par rapport au message
     let left = wrapperRect.left + (wrapperRect.width / 2) - (pickerWidth / 2);
     
-    // VÃ©rifier les limites horizontales
+    // Vérifier les limites horizontales
     if (left < 10) left = 10;
     if (left + pickerWidth > window.innerWidth - 10) {
         left = window.innerWidth - pickerWidth - 10;
@@ -5039,7 +4990,7 @@ function toggleReactionPicker(messageId, msgWrapper) {
     picker.style.top = top + 'px';
     picker.style.zIndex = '10000';
     
-    // Fermer au clic extÃ©rieur
+    // Fermer au clic extérieur
     setTimeout(() => {
         document.addEventListener('click', function closePickerOnce(e) {
             if (!picker.contains(e.target)) {
@@ -5064,11 +5015,11 @@ function startEditingMessage(messageId) {
     inputEl.focus();
     inputEl.setSelectionRange(msg.text.length, msg.text.length);
     
-    // Ajouter un indicateur visuel d'Ã©dition
+    // Ajouter un indicateur visuel d'édition
     const editingIndicator = document.createElement('div');
     editingIndicator.className = 'editing-indicator';
     editingIndicator.innerHTML = `
-        <span>âœï¸ Modification du message</span>
+        <span>✏️ Modification du message</span>
         <button class="cancel-edit-btn" onclick="cancelEditing()">Annuler</button>
     `;
     
@@ -5099,7 +5050,7 @@ function deleteMessage(messageId) {
         messageId,
         pseudo: userPseudo
     });
-    const container = elements.chatMessages;
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
     renderChatMessages(container);
 }
 
@@ -5121,7 +5072,7 @@ function handleTypingSignal(data, fromOdId) {
     const pseudo = data.pseudo || participants.get(fromOdId)?.pseudo || 'Quelqu\'un';
     const { statusEl } = getActiveChatElements(isReceiver);
     if (!statusEl) return;
-    statusEl.textContent = `${pseudo} Ã©crit...`;
+    statusEl.textContent = `${pseudo} écrit...`;
     statusEl.classList.add('typing');
     clearTimeout(typingIndicatorTimer);
     typingIndicatorTimer = setTimeout(() => updateChatStatus(true), 2500);
@@ -5132,10 +5083,10 @@ async function handleChatEdit(data, fromOdId) {
         let text;
         
         if (data.text) {
-            // Nouveau format: dÃ©jÃ  dÃ©chiffrÃ©
+            // Nouveau format: déjà déchiffré
             text = data.text;
         } else if (data.iv && data.ciphertext) {
-            // Ancien format: dÃ©chiffrer avec AES-GCM
+            // Ancien format: déchiffrer avec AES-GCM
             const iv = fromBase64(data.iv);
             const ciphertext = fromBase64(data.ciphertext);
             const decrypted = await window.crypto.subtle.decrypt(
@@ -5145,7 +5096,7 @@ async function handleChatEdit(data, fromOdId) {
             );
             text = new TextDecoder().decode(decrypted);
         } else {
-            console.error('âŒ Format d\'Ã©dition invalide');
+            console.error('❌ Format d\'édition invalide');
             return;
         }
         
@@ -5155,10 +5106,10 @@ async function handleChatEdit(data, fromOdId) {
             msg.edited = true;
             msg.deleted = false;
         }
-        const container = elements.chatMessages;
+        const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
         renderChatMessages(container);
     } catch (err) {
-        console.error('âŒ Erreur handleChatEdit:', err);
+        console.error('❌ Erreur handleChatEdit:', err);
     }
 }
 
@@ -5166,7 +5117,7 @@ function handleChatDelete(data) {
     const msg = findMessageById(data.messageId);
     if (msg) {
         msg.deleted = true;
-        const container = elements.chatMessages;
+        const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
         renderChatMessages(container);
     }
 }
@@ -5183,7 +5134,7 @@ function handleChatReaction(data) {
         updated = list.filter(u => u !== data.pseudo);
     }
     msg.reactions = { ...msg.reactions, [data.emoji]: updated };
-    const container = elements.chatMessages;
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
     renderChatMessages(container);
 }
 
@@ -5192,7 +5143,7 @@ function updateChatStatus(connected) {
     const connectedPeers = Array.from(peers.values()).filter(p => p.connected).length;
     statusEls.forEach(el => {
         if (el) {
-            el.textContent = connected ? `ConnectÃ© (${connectedPeers + 1} participants)` : 'En attente...';
+            el.textContent = connected ? `Connecté (${connectedPeers + 1} participants)` : 'En attente...';
             el.classList.toggle('connected', connected);
             el.classList.remove('typing');
         }
@@ -5202,7 +5153,7 @@ function updateChatStatus(connected) {
 // ===== RECHERCHE DANS LE CHAT =====
 
 function setupChatSearch() {
-    // CrÃ©ateur
+    // Créateur
     const searchToggle = document.getElementById('chat-search-toggle');
     const searchBar = document.getElementById('chat-search-bar');
     const searchInput = document.getElementById('chat-search-input');
@@ -5331,7 +5282,7 @@ function updateSearchResultsCount(count) {
     
     if (countEl) {
         if (chatSearchQuery || chatSearchUserFilter) {
-            countEl.textContent = `${count} rÃ©sultat(s)`;
+            countEl.textContent = `${count} résultat(s)`;
             countEl.classList.remove('hidden');
         } else {
             countEl.textContent = '';
@@ -5350,10 +5301,10 @@ function escapeRegex(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// ===== MESSAGES Ã‰PINGLÃ‰S =====
+// ===== MESSAGES ÉPINGLÉS =====
 
 function setupPinnedMessages() {
-    // CrÃ©ateur
+    // Créateur
     const pinsToggle = document.getElementById('chat-pins-toggle');
     if (pinsToggle) {
         pinsToggle.addEventListener('click', () => showPinnedModal(false));
@@ -5369,10 +5320,10 @@ function setupPinnedMessages() {
 function togglePinMessage(messageId) {
     if (pinnedMessageIds.has(messageId)) {
         pinnedMessageIds.delete(messageId);
-        showToast('Message dÃ©sÃ©pinglÃ©');
+        showToast('Message désépinglé');
     } else {
         pinnedMessageIds.add(messageId);
-        showToast('ðŸ“Œ Message Ã©pinglÃ©');
+        showToast('📌 Message épinglé');
     }
     
     // Synchroniser avec les autres participants
@@ -5382,7 +5333,7 @@ function togglePinMessage(messageId) {
         action: pinnedMessageIds.has(messageId) ? 'pin' : 'unpin'
     });
     
-    const container = elements.chatMessages;
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
     renderChatMessages(container);
     renderPinnedMessages(isReceiver);
 }
@@ -5394,7 +5345,7 @@ function handleChatPin(data) {
         pinnedMessageIds.delete(data.messageId);
     }
     
-    const container = elements.chatMessages;
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
     renderChatMessages(container);
     renderPinnedMessages(isReceiver);
 }
@@ -5408,7 +5359,7 @@ function renderPinnedMessages(isReceiverSide) {
     listEl.innerHTML = '';
     
     if (pinnedMessageIds.size === 0) {
-        listEl.innerHTML = '<p class="no-pins">Aucun message Ã©pinglÃ©</p>';
+        listEl.innerHTML = '<p class="no-pins">Aucun message épinglé</p>';
         return;
     }
     
@@ -5426,12 +5377,12 @@ function renderPinnedMessages(isReceiverSide) {
         
         const text = document.createElement('span');
         text.className = 'pinned-text';
-        text.textContent = msg.text.slice(0, 50) + (msg.text.length > 50 ? 'â€¦' : '');
+        text.textContent = msg.text.slice(0, 50) + (msg.text.length > 50 ? '…' : '');
         
         const unpinBtn = document.createElement('button');
         unpinBtn.className = 'unpin-btn';
-        unpinBtn.innerHTML = 'âœ•';
-        unpinBtn.title = 'DÃ©sÃ©pingler';
+        unpinBtn.innerHTML = '✕';
+        unpinBtn.title = 'Désépingler';
         unpinBtn.onclick = (e) => {
             e.stopPropagation();
             togglePinMessage(msgId);
@@ -5445,7 +5396,7 @@ function renderPinnedMessages(isReceiverSide) {
 }
 
 function scrollToMessage(messageId) {
-    const container = elements.chatMessages;
+    const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
     if (!container) return;
     
     const msgEl = container.querySelector(`[data-message-id="${messageId}"]`);
@@ -5502,7 +5453,7 @@ function ensureChatModalStyles() {
 }
 
 function setupChatExport() {
-    // CrÃ©ateur
+    // Créateur
     const exportBtn = document.getElementById('chat-export-btn');
     if (exportBtn) {
         exportBtn.addEventListener('click', () => showExportDialog());
@@ -5518,30 +5469,30 @@ function setupChatExport() {
 function showExportDialog() {
     const popup = openChatModal(`
         <div class="export-content modal-card">
-            <button class="modal-close" aria-label="Fermer">Ã—</button>
+            <button class="modal-close" aria-label="Fermer">×</button>
             <div class="modal-header">
-                <div class="modal-icon">ðŸ“¥</div>
+                <div class="modal-icon">📥</div>
                 <div>
                     <h3>Exporter la conversation</h3>
-                    <p class="modal-subtitle">Fichier local, rien n'est envoyÃ© au serveur.</p>
+                    <p class="modal-subtitle">Fichier local, rien n'est envoyé au serveur.</p>
                 </div>
             </div>
             <div class="export-grid">
                 <button class="option-card export-txt-btn">
-                    <div class="option-icon">ðŸ“„</div>
+                    <div class="option-icon">📄</div>
                     <div class="option-title">Texte (.txt) <span class="option-badge">Rapide</span></div>
-                    <div class="option-desc">Brut et lÃ©ger, lisible partout.</div>
-                    <div class="option-meta">IdÃ©al pour archiver</div>
+                    <div class="option-desc">Brut et léger, lisible partout.</div>
+                    <div class="option-meta">Idéal pour archiver</div>
                 </button>
                 <button class="option-card export-html-btn">
-                    <div class="option-icon">ðŸŒ</div>
-                    <div class="option-title">HTML stylÃ©</div>
+                    <div class="option-icon">🌐</div>
+                    <div class="option-title">HTML stylé</div>
                     <div class="option-desc">Mise en page avec couleurs et badges.</div>
-                    <div class="option-meta">IdÃ©al pour imprimer</div>
+                    <div class="option-meta">Idéal pour imprimer</div>
                 </button>
             </div>
             <div class="modal-footer">
-                <span class="modal-note">âš ï¸ Les autres participants seront notifiÃ©s.</span>
+                <span class="modal-note">⚠️ Les autres participants seront notifiés.</span>
                 <button class="btn btn-secondary export-cancel-btn">Annuler</button>
             </div>
         </div>
@@ -5579,8 +5530,8 @@ function exportChatAsTxt() {
         
         const time = new Date(msg.timestamp).toLocaleString();
         const author = msg.isSent ? userPseudo : (msg.pseudo || 'Anonyme');
-        const edited = msg.edited ? ' (modifiÃ©)' : '';
-        const pinned = pinnedMessageIds.has(msg.id) ? ' ðŸ“Œ' : '';
+        const edited = msg.edited ? ' (modifié)' : '';
+        const pinned = pinnedMessageIds.has(msg.id) ? ' 📌' : '';
         
         content += `[${time}] ${author}${edited}${pinned}:\n`;
         content += `${msg.text}\n\n`;
@@ -5590,7 +5541,7 @@ function exportChatAsTxt() {
     content += `Total: ${chatMessages.filter(m => !m.deleted).length} messages\n`;
     
     downloadFile(content, `securepeer-chat-${roomId}.txt`, 'text/plain');
-    showToast('âœ… Conversation exportÃ©e en TXT');
+    showToast('✅ Conversation exportée en TXT');
 }
 
 function exportChatAsHtml() {
@@ -5624,7 +5575,7 @@ function exportChatAsHtml() {
 </head>
 <body>
     <div class="header">
-        <h1>ðŸ”’ SecurePeer</h1>
+        <h1>🔒 SecurePeer</h1>
         <p>Export de conversation</p>
         <p>Date: ${new Date().toLocaleString()}</p>
         <p>Session: ${roomId} | Mode: ${sessionMode}</p>
@@ -5636,9 +5587,9 @@ function exportChatAsHtml() {
         
         const time = new Date(msg.timestamp).toLocaleString();
         const author = msg.isSent ? userPseudo : (msg.pseudo || 'Anonyme');
-        const edited = msg.edited ? '<span class="badge">modifiÃ©</span>' : '';
+        const edited = msg.edited ? '<span class="badge">modifié</span>' : '';
         const pinned = pinnedMessageIds.has(msg.id) ? ' pinned' : '';
-        const pinnedBadge = pinnedMessageIds.has(msg.id) ? '<span class="badge">ðŸ“Œ</span>' : '';
+        const pinnedBadge = pinnedMessageIds.has(msg.id) ? '<span class="badge">📌</span>' : '';
         
         html += `
         <div class="message ${msg.isSent ? 'sent' : 'received'}${pinned}">
@@ -5651,13 +5602,13 @@ function exportChatAsHtml() {
     </div>
     <div class="footer">
         <p>Total: ${chatMessages.filter(m => !m.deleted).length} messages</p>
-        <p>ExportÃ© depuis SecurePeer - Chiffrement E2E</p>
+        <p>Exporté depuis SecurePeer - Chiffrement E2E</p>
     </div>
 </body>
 </html>`;
     
     downloadFile(html, `securepeer-chat-${roomId}.html`, 'text/html');
-    showToast('âœ… Conversation exportÃ©e en HTML');
+    showToast('✅ Conversation exportée en HTML');
 }
 
 function downloadFile(content, filename, mimeType) {
@@ -5673,13 +5624,13 @@ function downloadFile(content, filename, mimeType) {
 // ===== NOTIFICATION D'EXPORT =====
 
 function handleExportNotify(data) {
-    showToast(`ðŸ“¥ ${data.pseudo} a exportÃ© la conversation (${data.format})`, 5000);
+    showToast(`📥 ${data.pseudo} a exporté la conversation (${data.format})`, 5000);
 }
 
-// ===== MESSAGES Ã‰PHÃ‰MÃˆRES =====
+// ===== MESSAGES ÉPHÉMÈRES =====
 
 function setupEphemeralMessages() {
-    // CrÃ©ateur
+    // Créateur
     const ephemeralToggle = document.getElementById('chat-ephemeral-toggle');
     if (ephemeralToggle) {
         ephemeralToggle.addEventListener('click', () => showEphemeralDialog());
@@ -5693,13 +5644,13 @@ function setupEphemeralMessages() {
         updateEphemeralButton(rEphemeralToggle);
     }
     
-    // Bouton vÃ©rification d'identitÃ© (crÃ©ateur)
+    // Bouton vérification d'identité (créateur)
     const verifyBtn = document.getElementById('verify-identity-btn');
     if (verifyBtn) {
         verifyBtn.addEventListener('click', () => showSafetyNumbersModal());
     }
     
-    // Bouton vÃ©rification d'identitÃ© (receiver)
+    // Bouton vérification d'identité (receiver)
     const rVerifyBtn = document.getElementById('receiver-verify-identity-btn');
     if (rVerifyBtn) {
         rVerifyBtn.addEventListener('click', () => showSafetyNumbersModal());
@@ -5710,19 +5661,19 @@ function updateEphemeralButton(btn) {
     if (!btn) return;
     btn.classList.toggle('active', ephemeralMode);
     btn.title = ephemeralMode 
-        ? `Messages Ã©phÃ©mÃ¨res: ${ephemeralDuration}s` 
-        : 'Messages Ã©phÃ©mÃ¨res (dÃ©sactivÃ©)';
+        ? `Messages éphémères: ${ephemeralDuration}s` 
+        : 'Messages éphémères (désactivé)';
 }
 
 function showEphemeralDialog() {
     const popup = openChatModal(`
         <div class="export-content modal-card">
-            <button class="modal-close" aria-label="Fermer">Ã—</button>
+            <button class="modal-close" aria-label="Fermer">×</button>
             <div class="modal-header">
-                <div class="modal-icon">â±ï¸</div>
+                <div class="modal-icon">⏱️</div>
                 <div>
-                    <h3>Messages Ã©phÃ©mÃ¨res</h3>
-                    <p class="modal-subtitle">Suppression automatique aprÃ¨s le dÃ©lai choisi.</p>
+                    <h3>Messages éphémères</h3>
+                    <p class="modal-subtitle">Suppression automatique après le délai choisi.</p>
                 </div>
             </div>
             <div class="ephemeral-body">
@@ -5731,7 +5682,7 @@ function showEphemeralDialog() {
                     <input type="checkbox" id="ephemeral-enabled" ${ephemeralMode ? 'checked' : ''}>
                 </label>
                 <div class="ephemeral-duration-row">
-                    <label for="ephemeral-duration-select">DurÃ©e</label>
+                    <label for="ephemeral-duration-select">Durée</label>
                     <select id="ephemeral-duration-select">
                         <option value="10" ${ephemeralDuration === 10 ? 'selected' : ''}>10 secondes</option>
                         <option value="30" ${ephemeralDuration === 30 ? 'selected' : ''}>30 secondes</option>
@@ -5740,7 +5691,7 @@ function showEphemeralDialog() {
                         <option value="600" ${ephemeralDuration === 600 ? 'selected' : ''}>10 minutes</option>
                     </select>
                 </div>
-                <p class="modal-note">âš ï¸ SynchronisÃ© avec tous les participants.</p>
+                <p class="modal-note">⚠️ Synchronisé avec tous les participants.</p>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary ephemeral-cancel-btn">Annuler</button>
@@ -5756,21 +5707,21 @@ function showEphemeralDialog() {
         ephemeralMode = enabled;
         ephemeralDuration = duration;
         
-        // Warning si dÃ©sactivÃ©
+        // Warning si désactivé
         if (!enabled) {
             const warningHtml = `
                 <div class="export-content modal-card" style="border: 2px solid #ffc107;">
-                    <button class="modal-close" aria-label="Fermer">Ã—</button>
+                    <button class="modal-close" aria-label="Fermer">×</button>
                     <div class="modal-header" style="background: #fff3cd;">
-                        <div class="modal-icon">âš ï¸</div>
+                        <div class="modal-icon">⚠️</div>
                         <div>
-                            <h3>Messages Ã©phÃ©mÃ¨res dÃ©sactivÃ©s</h3>
-                            <p class="modal-subtitle">Vos messages ne seront plus automatiquement supprimÃ©s</p>
+                            <h3>Messages éphémères désactivés</h3>
+                            <p class="modal-subtitle">Vos messages ne seront plus automatiquement supprimés</p>
                         </div>
                     </div>
                     <div style="padding: 20px;">
-                        <p>Les messages persisteront dans le navigateur jusqu'Ã  ce que vous fermiez la session.</p>
-                        <p style="margin-top: 10px;"><strong>Pour une sÃ©curitÃ© maximale, nous recommandons de garder les messages Ã©phÃ©mÃ¨res activÃ©s.</strong></p>
+                        <p>Les messages persisteront dans le navigateur jusqu'à ce que vous fermiez la session.</p>
+                        <p style="margin-top: 10px;"><strong>Pour une sécurité maximale, nous recommandons de garder les messages éphémères activés.</strong></p>
                     </div>
                     <div class="modal-footer">
                         <button class="btn btn-primary">Compris</button>
@@ -5790,8 +5741,8 @@ function showEphemeralDialog() {
         
         updateAllEphemeralButtons();
         showToast(ephemeralMode 
-            ? `â±ï¸ Messages Ã©phÃ©mÃ¨res: ${ephemeralDuration}s` 
-            : 'â±ï¸ Messages Ã©phÃ©mÃ¨res dÃ©sactivÃ©s');
+            ? `⏱️ Messages éphémères: ${ephemeralDuration}s` 
+            : '⏱️ Messages éphémères désactivés');
         popup.remove();
     });
     
@@ -5804,7 +5755,7 @@ function showPinnedModal(isReceiverSide) {
         const msg = findMessageById(id);
         if (!msg || msg.deleted) return;
         const author = msg.isSent ? 'Vous' : (msg.pseudo || 'Anonyme');
-        const preview = msg.text.slice(0, 120) + (msg.text.length > 120 ? 'â€¦' : '');
+        const preview = msg.text.slice(0, 120) + (msg.text.length > 120 ? '…' : '');
         items.push(`
             <div class="pinned-modal-item" data-id="${id}">
                 <div class="pinned-meta">
@@ -5815,20 +5766,20 @@ function showPinnedModal(isReceiverSide) {
             </div>
         `);
     });
-    const listHtml = items.length ? items.join('') : '<div class="no-pins">Aucun message Ã©pinglÃ©</div>';
+    const listHtml = items.length ? items.join('') : '<div class="no-pins">Aucun message épinglé</div>';
     const popup = openChatModal(`
         <div class="export-content modal-card">
-            <button class="modal-close" aria-label="Fermer">Ã—</button>
+            <button class="modal-close" aria-label="Fermer">×</button>
             <div class="modal-header">
-                <div class="modal-icon">ðŸ“Œ</div>
+                <div class="modal-icon">📌</div>
                 <div>
-                    <h3>Messages Ã©pinglÃ©s</h3>
+                    <h3>Messages épinglés</h3>
                     <p class="modal-subtitle">Clique pour naviguer dans la conversation.</p>
                 </div>
             </div>
             <div class="pinned-modal-list">${listHtml}</div>
             <div class="modal-footer">
-                <span class="modal-note">SynchronisÃ© entre tous les participants.</span>
+                <span class="modal-note">Synchronisé entre tous les participants.</span>
                 <button class="btn btn-secondary export-cancel-btn">Fermer</button>
             </div>
         </div>
@@ -5848,8 +5799,8 @@ function handleEphemeralSync(data) {
     ephemeralDuration = data.duration;
     updateAllEphemeralButtons();
     showToast(data.enabled 
-        ? `â±ï¸ ${data.pseudo} a activÃ© les messages Ã©phÃ©mÃ¨res (${data.duration}s)`
-        : `â±ï¸ ${data.pseudo} a dÃ©sactivÃ© les messages Ã©phÃ©mÃ¨res`);
+        ? `⏱️ ${data.pseudo} a activé les messages éphémères (${data.duration}s)`
+        : `⏱️ ${data.pseudo} a désactivé les messages éphémères`);
 }
 
 function updateAllEphemeralButtons() {
@@ -5857,7 +5808,7 @@ function updateAllEphemeralButtons() {
     updateEphemeralButton(document.getElementById('receiver-chat-ephemeral-toggle'));
 }
 
-// ===== SAFETY NUMBERS (VÃ©rification d'identitÃ©) =====
+// ===== SAFETY NUMBERS (Vérification d'identité) =====
 
 function showSafetyNumbersModal() {
     const modal = document.getElementById('safety-numbers-modal');
@@ -5868,19 +5819,19 @@ function showSafetyNumbersModal() {
     if (myFingerprint) {
         myNumberEl.textContent = myFingerprint;
     } else {
-        myNumberEl.textContent = 'âŒ ClÃ© non gÃ©nÃ©rÃ©e';
+        myNumberEl.textContent = '❌ Clé non générée';
     }
     
-    // Afficher le fingerprint du premier peer connectÃ©
+    // Afficher le fingerprint du premier peer connecté
     const peerNumberEl = document.getElementById('peer-safety-number');
     if (peerFingerprints.size > 0) {
         const firstPeerFingerprint = Array.from(peerFingerprints.values())[0];
         peerNumberEl.textContent = firstPeerFingerprint;
     } else {
-        peerNumberEl.textContent = 'â³ Aucun correspondant connectÃ©';
+        peerNumberEl.textContent = '⏳ Aucun correspondant connecté';
     }
     
-    // GÃ©nÃ©rer QR codes
+    // Générer QR codes
     const myQrDiv = document.getElementById('my-safety-qr');
     const peerQrDiv = document.getElementById('peer-safety-qr');
     
@@ -5916,7 +5867,7 @@ function showSafetyNumbersModal() {
 }
 
 /**
- * Affiche une alerte de sÃ©curitÃ© critique quand le fingerprint change
+ * Affiche une alerte de sécurité critique quand le fingerprint change
  */
 function showSecurityAlert(odId, oldFingerprint, newFingerprint) {
     const participantInfo = participants.get(odId);
@@ -5924,41 +5875,41 @@ function showSecurityAlert(odId, oldFingerprint, newFingerprint) {
     
     const alertHtml = `
         <div class="export-content modal-card" style="border: 3px solid #dc3545;">
-            <button class="modal-close" aria-label="Fermer">Ã—</button>
+            <button class="modal-close" aria-label="Fermer">×</button>
             <div class="modal-header" style="background: #dc3545; color: white;">
-                <div class="modal-icon">ðŸš¨</div>
+                <div class="modal-icon">🚨</div>
                 <div>
-                    <h3>ALERTE SÃ‰CURITÃ‰</h3>
-                    <p class="modal-subtitle">Changement de clÃ© dÃ©tectÃ©</p>
+                    <h3>ALERTE SÉCURITÉ</h3>
+                    <p class="modal-subtitle">Changement de clé détecté</p>
                 </div>
             </div>
             <div style="padding: 20px;">
-                <p style="margin-bottom: 15px;"><strong>Le numÃ©ro de sÃ©curitÃ© de ${pseudo} a changÃ©.</strong></p>
+                <p style="margin-bottom: 15px;"><strong>Le numéro de sécurité de ${pseudo} a changé.</strong></p>
                 
                 <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #ffc107;">
-                    <strong>âš ï¸ Cela peut signifier:</strong>
+                    <strong>⚠️ Cela peut signifier:</strong>
                     <ul style="margin: 10px 0 0 20px;">
-                        <li>Votre correspondant a rÃ©installÃ© l'application</li>
+                        <li>Votre correspondant a réinstallé l'application</li>
                         <li>Quelqu'un intercepte vos messages (MITM)</li>
                     </ul>
                 </div>
                 
                 <div style="margin: 15px 0;">
-                    <p><strong>Ancien numÃ©ro:</strong></p>
+                    <p><strong>Ancien numéro:</strong></p>
                     <div style="font-family: monospace; font-size: 12px; padding: 10px; background: #f5f5f5; border-radius: 4px; margin: 5px 0;">
                         ${oldFingerprint}
                     </div>
                 </div>
                 
                 <div style="margin: 15px 0;">
-                    <p><strong>Nouveau numÃ©ro:</strong></p>
+                    <p><strong>Nouveau numéro:</strong></p>
                     <div style="font-family: monospace; font-size: 12px; padding: 10px; background: #f5f5f5; border-radius: 4px; margin: 5px 0;">
                         ${newFingerprint}
                     </div>
                 </div>
                 
                 <div style="background: #f8d7da; padding: 15px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #dc3545;">
-                    <strong>ðŸ›¡ï¸ Recommandation:</strong> VÃ©rifiez avec votre correspondant par tÃ©lÃ©phone ou en personne que ce changement est lÃ©gitime avant de continuer Ã  Ã©changer des informations sensibles.
+                    <strong>🛡️ Recommandation:</strong> Vérifiez avec votre correspondant par téléphone ou en personne que ce changement est légitime avant de continuer à échanger des informations sensibles.
                 </div>
             </div>
         </div>
@@ -5968,7 +5919,7 @@ function showSecurityAlert(odId, oldFingerprint, newFingerprint) {
 }
 
 /**
- * Met Ã  jour le countdown visuel d'un message Ã©phÃ©mÃ¨re
+ * Met à jour le countdown visuel d'un message éphémère
  */
 function updateEphemeralCountdown(messageId, expiryTime, countdownEl) {
     const updateCountdown = () => {
@@ -5976,17 +5927,17 @@ function updateEphemeralCountdown(messageId, expiryTime, countdownEl) {
         const remaining = Math.max(0, Math.ceil((expiryTime - now) / 1000));
         
         if (remaining > 0) {
-            countdownEl.textContent = `â±ï¸ ${remaining}s`;
+            countdownEl.textContent = `⏱️ ${remaining}s`;
             countdownEl.style.color = remaining <= 10 ? '#dc3545' : '#ff6b6b';
         } else {
-            countdownEl.textContent = 'ðŸ’¨';
+            countdownEl.textContent = '💨';
         }
     };
     
-    // Mettre Ã  jour immÃ©diatement
+    // Mettre à jour immédiatement
     updateCountdown();
     
-    // Mettre Ã  jour chaque seconde
+    // Mettre à jour chaque seconde
     if (ephemeralCountdowns.has(messageId)) {
         clearInterval(ephemeralCountdowns.get(messageId));
     }
@@ -6002,7 +5953,7 @@ function scheduleMessageDeletion(messageId, delay) {
         const msg = findMessageById(messageId);
         if (msg && !msg.deleted) {
             msg.deleted = true;
-            msg.text = 'ðŸ’¨ Message Ã©phÃ©mÃ¨re expirÃ©';
+            msg.text = '💨 Message éphémère expiré';
             
             // Nettoyer le countdown
             if (ephemeralCountdowns.has(messageId)) {
@@ -6010,7 +5961,7 @@ function scheduleMessageDeletion(messageId, delay) {
                 ephemeralCountdowns.delete(messageId);
             }
             
-            const container = elements.chatMessages;
+            const container = isReceiver ? elements.receiverChatMessages : elements.chatMessages;
             renderChatMessages(container);
         }
     }, delay * 1000);
@@ -6052,12 +6003,12 @@ function handleBothFileSelect(files, isReceiverSide) {
     for (const file of files) {
         pendingBothFiles.push({ file, isReceiverSide });
         
-        // Ajouter Ã  la liste visuelle
+        // Ajouter à la liste visuelle
         const itemDiv = document.createElement('div');
         itemDiv.className = 'both-file-item pending-send';
         itemDiv.dataset.fileName = file.name;
         itemDiv.innerHTML = `
-            <span class="file-icon">ðŸ“„</span>
+            <span class="file-icon">📄</span>
             <div class="file-details">
                 <span class="file-name">${escapeHtml(file.name)}</span>
                 <span class="file-size">${formatFileSize(file.size)}</span>
@@ -6082,24 +6033,24 @@ async function sendBothFiles(isReceiverSide) {
         try {
             await sendBothFile(file, isReceiverSide);
             
-            // Mettre Ã  jour le statut dans la liste
+            // Mettre à jour le statut dans la liste
             const listEl = isReceiverSide ? elements.receiverBothFileList : elements.bothFileList;
             const itemEl = listEl.querySelector(`[data-file-name="${file.name}"]`);
             if (itemEl) {
                 itemEl.classList.remove('pending-send');
                 const statusEl = itemEl.querySelector('.file-status');
                 if (statusEl) {
-                    statusEl.textContent = 'EnvoyÃ©';
+                    statusEl.textContent = 'Envoyé';
                     statusEl.classList.remove('pending');
                 }
             }
         } catch (err) {
-            console.error('âŒ Erreur envoi fichier:', err);
+            console.error('❌ Erreur envoi fichier:', err);
             showToast('Erreur lors de l\'envoi de ' + file.name);
         }
     }
     
-    // Retirer les fichiers envoyÃ©s de la liste
+    // Retirer les fichiers envoyés de la liste
     pendingBothFiles = pendingBothFiles.filter(f => f.isReceiverSide !== isReceiverSide);
 }
 
@@ -6116,7 +6067,7 @@ async function sendBothFile(file, isReceiverSide) {
         data
     );
     
-    // Envoyer les mÃ©tadonnÃ©es Ã  tous les peers
+    // Envoyer les métadonnées à tous les peers
     broadcastToAllPeers({
         type: 'both-file-meta',
         name: file.name,
@@ -6126,7 +6077,7 @@ async function sendBothFile(file, isReceiverSide) {
         senderPseudo: userPseudo
     });
     
-    // Envoyer les donnÃ©es chiffrÃ©es en chunks
+    // Envoyer les données chiffrées en chunks
     const encryptedData = new Uint8Array(encrypted);
     const chunkSize = 64 * 1024;
     let offset = 0;
@@ -6142,7 +6093,7 @@ async function sendBothFile(file, isReceiverSide) {
         offset += chunkSize;
         index++;
         
-        // Petit dÃ©lai pour Ã©viter de saturer le buffer
+        // Petit délai pour éviter de saturer le buffer
         await new Promise(resolve => setTimeout(resolve, 5));
     }
     
@@ -6152,10 +6103,10 @@ async function sendBothFile(file, isReceiverSide) {
         name: file.name
     });
     
-    console.log('ðŸ“¤ Fichier envoyÃ© Ã  tous les participants:', file.name);
+    console.log('📤 Fichier envoyé à tous les participants:', file.name);
 }
 
-// Variables pour la rÃ©ception de fichiers en mode both
+// Variables pour la réception de fichiers en mode both
 let incomingBothFile = null;
 let incomingBothChunks = [];
 
@@ -6169,23 +6120,23 @@ async function handleBothFileMeta(data) {
     };
     incomingBothChunks = [];
     
-    // Ajouter Ã  la liste visuelle
-    const listEl = elements.bothFileList;
+    // Ajouter à la liste visuelle
+    const listEl = isReceiver ? elements.receiverBothFileList : elements.bothFileList;
     const itemDiv = document.createElement('div');
     itemDiv.className = 'both-file-item';
     itemDiv.dataset.fileName = data.name;
     itemDiv.innerHTML = `
-        <span class="file-icon">ðŸ“¥</span>
+        <span class="file-icon">📥</span>
         <div class="file-details">
             <span class="file-sender">${escapeHtml(incomingBothFile.senderPseudo)}</span>
             <span class="file-name">${escapeHtml(data.name)}</span>
             <span class="file-size">${formatFileSize(data.size)}</span>
         </div>
-        <span class="file-status pending">RÃ©ception...</span>
+        <span class="file-status pending">Réception...</span>
     `;
     listEl.appendChild(itemDiv);
     
-    console.log('ðŸ“¥ RÃ©ception fichier de', incomingBothFile.senderPseudo, ':', data.name);
+    console.log('📥 Réception fichier de', incomingBothFile.senderPseudo, ':', data.name);
 }
 
 function handleBothFileChunk(data) {
@@ -6196,7 +6147,7 @@ async function handleBothFileComplete(data) {
     if (!incomingBothFile) return;
     
     try {
-        // Reconstituer les donnÃ©es chiffrÃ©es
+        // Reconstituer les données chiffrées
         const totalLength = incomingBothChunks.reduce((acc, chunk) => acc + chunk.length, 0);
         const encryptedData = new Uint8Array(totalLength);
         let offset = 0;
@@ -6205,53 +6156,53 @@ async function handleBothFileComplete(data) {
             offset += chunk.length;
         }
         
-        // DÃ©chiffrer
+        // Déchiffrer
         const decrypted = await window.crypto.subtle.decrypt(
             { name: 'AES-GCM', iv: incomingBothFile.iv },
             cryptoKey,
             encryptedData
         );
         
-        // CrÃ©er le blob et proposer le tÃ©lÃ©chargement
+        // Créer le blob et proposer le téléchargement
         const blob = new Blob([decrypted], { type: incomingBothFile.mimeType });
         const url = URL.createObjectURL(blob);
         
-        // Mettre Ã  jour la liste avec un bouton de tÃ©lÃ©chargement
-        const listEl = elements.bothFileList;
+        // Mettre à jour la liste avec un bouton de téléchargement
+        const listEl = isReceiver ? elements.receiverBothFileList : elements.bothFileList;
         const itemEl = listEl.querySelector(`[data-file-name="${data.name}"]`);
         if (itemEl) {
             const statusEl = itemEl.querySelector('.file-status');
             if (statusEl) {
-                statusEl.outerHTML = `<a href="${url}" download="${data.name}" class="btn btn-small file-action">ðŸ“¥ TÃ©lÃ©charger</a>`;
+                statusEl.outerHTML = `<a href="${url}" download="${data.name}" class="btn btn-small file-action">📥 Télécharger</a>`;
             }
-            itemEl.querySelector('.file-icon').textContent = 'âœ…';
+            itemEl.querySelector('.file-icon').textContent = '✅';
         }
         
-        console.log('âœ… Fichier reÃ§u:', data.name);
-        showToast('Fichier reÃ§u: ' + data.name);
+        console.log('✅ Fichier reçu:', data.name);
+        showToast('Fichier reçu: ' + data.name);
     } catch (err) {
-        console.error('âŒ Erreur dÃ©chiffrement fichier:', err);
-        showToast('Erreur lors de la rÃ©ception du fichier');
+        console.error('❌ Erreur déchiffrement fichier:', err);
+        showToast('Erreur lors de la réception du fichier');
     }
     
     incomingBothFile = null;
     incomingBothChunks = [];
 }
 
-// DÃ©marrer l'application
+// Démarrer l'application
 // document.addEventListener('DOMContentLoaded', init);
 
-// VÃ©rifier et afficher le popup Tor Browser pour la premiÃ¨re utilisation
+// Vérifier et afficher le popup Tor Browser pour la première utilisation
 function checkAndShowTorPopup() {
     const torPopupDismissed = localStorage.getItem('torPopupDismissed');
     
-    // Afficher seulement si jamais affichÃ© ou pas dÃ©finitivement masquÃ©
+    // Afficher seulement si jamais affiché ou pas définitivement masqué
     if (!torPopupDismissed) {
         const torPopup = document.getElementById('tor-popup');
         const torDismissBtn = document.getElementById('tor-dismiss');
         const torDontShow = document.getElementById('tor-dont-show');
         
-        // Afficher le popup aprÃ¨s 1 seconde
+        // Afficher le popup après 1 seconde
         setTimeout(() => {
             torPopup.classList.remove('hidden');
         }, 1000);
@@ -6260,7 +6211,7 @@ function checkAndShowTorPopup() {
         torDismissBtn.addEventListener('click', () => {
             torPopup.classList.add('hidden');
             
-            // Si l'utilisateur a cochÃ© "Ne plus afficher"
+            // Si l'utilisateur a coché "Ne plus afficher"
             if (torDontShow.checked) {
                 localStorage.setItem('torPopupDismissed', 'true');
             }
@@ -6278,7 +6229,7 @@ function checkAndShowTorPopup() {
     }
 }
 
-// Afficher le badge "Session Ã©phÃ©mÃ¨re" quand une session est active
+// Afficher le badge "Session éphémère" quand une session est active
 function showEphemeralBadge() {
     const badge = document.getElementById('ephemeral-badge');
     if (badge) {
@@ -6286,7 +6237,7 @@ function showEphemeralBadge() {
     }
 }
 
-// Masquer le badge "Session Ã©phÃ©mÃ¨re"
+// Masquer le badge "Session éphémère"
 function hideEphemeralBadge() {
     const badge = document.getElementById('ephemeral-badge');
     if (badge) {
@@ -6300,7 +6251,7 @@ window.addEventListener('hashchange', () => {
     window.location.reload(true);
 });
 
-// DÃ©tecter aussi les changements via popstate (bouton retour/avant)
+// Détecter aussi les changements via popstate (bouton retour/avant)
 window.addEventListener('popstate', () => {
     window.location.reload(true);
 });
